@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  background-color: #f8fafc;
+}
+
+@media print {
+  .no-print { display: none !important; }
+  .print-full { width: 100% !important; }
+}
