@@ -232,7 +232,7 @@ export default function CalendarGrid({
                                                                                         <span className="block text-[8px] font-bold text-orange-500 uppercase leading-none mb-0.5">↩ redir</span>
                                                                                     )}
                                                                                     {missed && (
-                                                                                        <span className="block text-[8px] font-bold text-red-500 uppercase leading-none mb-0.5" title="Fora da semana solicitada">⚠️ atrasado</span>
+                                                                                        <span className="block text-[8px] font-bold text-red-500 uppercase leading-none mb-0.5" title="Fora da janela de prioridade">⚠️ atrasado</span>
                                                                                     )}
                                                                                     <span className="font-medium text-slate-800">{item.client}</span>
                                                                                     <span className="text-slate-400 mx-0.5">·</span>

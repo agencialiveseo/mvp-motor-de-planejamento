@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import type { DemandItem, Pilot, ProductionType, PreferredWeek } from '../types';
-import { WEEK_OPTIONS, WEEK_LABELS } from '../types';
+import type { DemandItem, Pilot, ProductionType, Priority } from '../types';
+import { PRIORITY_OPTIONS, PRIORITY_LABELS } from '../types';
 import { PRODUCTION_LABELS, PRODUCTION_TYPES, calcUP } from '../constants/productions';
 import { getWorkdays, MONTH_NAMES } from '../utils/dates';
 
@@ -17,7 +17,7 @@ interface Props {
 const MAX_PILOTS = 4;
 
 function newItem(index: number): DemandItem {
-  return { id: crypto.randomUUID(), client: '', type: 'blogpost_produce', quantity: 1, remainingQty: 1, upPerUnit: 1, originalIndex: index, preferredPilotIds: [], preferredWeek: null };
+  return { id: crypto.randomUUID(), client: '', type: 'blogpost_produce', quantity: 1, remainingQty: 1, upPerUnit: 1, originalIndex: index, preferredPilotIds: [], priority: null };
 }
 
 /** Normalise a production type string from CSV (label or key). */
@@ -152,9 +152,9 @@ export default function StepDemand({
 
   // ── CSV template download ─────────────────────────────────────────────────
   function downloadTemplate() {
-    const header = 'cliente,tipo,quantidade,pilots_preferenciais,semana_preferencial';
-    const ex1 = `Loja Exemplo,${PRODUCTION_TYPES[0]},4,${pilots[0]?.name ?? 'PilotA'},semana_1`;
-    const ex2 = `Cliente Beta,${PRODUCTION_TYPES[1]},2,${pilots[0]?.name ?? 'PilotA'};${pilots[1]?.name ?? 'PilotB'},ultima_semana`;
+    const header = 'cliente,tipo,quantidade,pilots_preferenciais,prioridade';
+    const ex1 = `Loja Exemplo,${PRODUCTION_TYPES[0]},4,${pilots[0]?.name ?? 'PilotA'},alta`;
+    const ex2 = `Cliente Beta,${PRODUCTION_TYPES[1]},2,${pilots[0]?.name ?? 'PilotA'};${pilots[1]?.name ?? 'PilotB'},baixa`;
     downloadFile([header, ex1, ex2].join('\n'), 'modelo_demanda.csv', 'text/csv');
   }
 
@@ -181,7 +181,7 @@ export default function StepDemand({
         const colTipo = headers.indexOf('tipo');
         const colQtd = headers.indexOf('quantidade');
         const colPilots = headers.indexOf('pilots_preferenciais');
-        const colSemana = headers.indexOf('semana_preferencial');
+        const colSemana = headers.indexOf('prioridade');
 
         if (colCliente === -1 || colTipo === -1 || colQtd === -1) {
           throw new Error('Colunas obrigatórias não encontradas. O CSV precisa ter: cliente, tipo, quantidade.');
@@ -210,11 +210,11 @@ export default function StepDemand({
               .slice(0, MAX_PILOTS);
           }
 
-          let preferredWeek: PreferredWeek | null = null;
+          let priority: Priority | null = null;
           if (colSemana !== -1 && cols[colSemana]) {
-            const wInfo = cols[colSemana].trim() as PreferredWeek;
-            if (WEEK_OPTIONS.includes(wInfo)) {
-              preferredWeek = wInfo;
+            const pInfo = cols[colSemana].trim() as Priority;
+            if (PRIORITY_OPTIONS.includes(pInfo)) {
+              priority = pInfo;
             }
           }
 
@@ -227,7 +227,7 @@ export default function StepDemand({
             upPerUnit: calcUP(type, 1),
             originalIndex: demandItems.length + newItems.length + i,
             preferredPilotIds,
-            preferredWeek,
+            priority,
           });
         }
 
@@ -268,7 +268,7 @@ export default function StepDemand({
                   Pilots preferenciais
                   <span className="ml-1 text-xs font-normal text-slate-400">(máx. {MAX_PILOTS})</span>
                 </th>
-                <th className="text-left px-3 py-3 font-semibold text-slate-600">Semana preferencial</th>
+                <th className="text-left px-3 py-3 font-semibold text-slate-600">Prioridade</th>
                 <th className="px-3 py-3 rounded-tr-xl" />
               </tr>
             </thead>
@@ -323,13 +323,13 @@ export default function StepDemand({
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={item.preferredWeek || ''}
-                      onChange={(e) => updateItem(item.id, { preferredWeek: (e.target.value as PreferredWeek) || null })}
+                      value={item.priority || ''}
+                      onChange={(e) => updateItem(item.id, { priority: (e.target.value as Priority) || null })}
                       className="w-full border border-slate-200 rounded px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     >
-                      <option value="">Qualquer (padrão)</option>
-                      {WEEK_OPTIONS.map((w) => (
-                        <option key={w} value={w}>{WEEK_LABELS[w]}</option>
+                      <option value="">Livre (sem prioridade)</option>
+                      {PRIORITY_OPTIONS.map((p) => (
+                        <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
                       ))}
                     </select>
                   </td>
@@ -388,7 +388,7 @@ export default function StepDemand({
 
         {/* CSV format hint */}
         <p className="text-xs text-slate-400 mb-6">
-          Formato CSV: <code className="bg-slate-100 px-1 rounded">cliente, tipo, quantidade, pilots_preferenciais, semana_preferencial</code>
+          Formato CSV: <code className="bg-slate-100 px-1 rounded">cliente, tipo, quantidade, pilots_preferenciais, prioridade</code> — valores válidos para prioridade: <code className="bg-slate-100 px-1 rounded">alta</code> (1ª e 2ª semana) ou <code className="bg-slate-100 px-1 rounded">baixa</code> (restante do mês)
         </p>
 
         <div className="flex justify-between">
@@ -436,9 +436,9 @@ export default function StepDemand({
                 <p className={`text-sm font-semibold ${statusColor}`}>{statusLabel}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500 mb-1">Direcionais solicitados</p>
+                <p className="text-xs text-slate-500 mb-1">Com prioridade definida</p>
                 <p className="text-sm font-semibold text-slate-800">
-                  {demandItems.filter(i => !!i.preferredWeek).length}
+                  {demandItems.filter(i => !!i.priority).length}
                 </p>
               </div>
               <div>

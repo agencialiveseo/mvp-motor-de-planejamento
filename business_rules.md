@@ -11,12 +11,17 @@ Abaixo estão estabalecidas as **Regras de Negócio (v4)** validadas e em produ�
 - **Unidade de Produção (UP):** O motor lê diretamente o peso da tarefa inserido pelo Engenheiro (geralmente extraído do CSV) ou calculado via tabelas constantes internas.
 - **Capacidade Mensal (Meta):** O poder total de absorção de um Pilot naquele mês exato equivale a `= (Meta UP Diária do Pilot) × (Número de Dias Úteis)`.
 
-## 2. Direcionamento Semanal (Restrição Temporal)
-A regra mais autoritária de prioridade não é o tamanho do cliente, e sim sua **janela temporal**:
-- Demais podem conter a indicação de uma **Semana Preferencial** (ex: `semana_1`, `semana_4`, `ultima_semana`).
-- **Prioridade Absoluta:** O motor executa rodadas separadas. Todos os itens "Direcionais" são agendados cirurgicamente primeiro. Os itens "Livres" apenas aproveitam as sobras de tempo (buracos na agenda).
-- **Atrelamento de Limite Semanal:** A capacidade de uma janela semanal é finita e calculada com base na meta. Demandas direcionadas disputam esse teto no modo *Primeiro a Chegar, Primeiro a Ocupar*.
-- **Atraso Restrito (Missed Directional):** Se houver superlotação de demandas direcionadas para uma mesma semana num pilot que eleve o teto estipulado, esse item "transborda". O algoritmo o empurra na agenda para depois, mas marca-o de imediato como **Atrasado** (identificável visualmente em vermelho e na métrica final de acompanhamento). Importante: um item só cai pra frente; ele nunca é adiantado no calendário desrespeitando o fluxo natural de recebimento de material.
+## 2. Prioridade de Demanda (Restrição Temporal)
+A regra mais autoritária de ordenação não é o tamanho do cliente, e sim sua **faixa de prioridade**:
+- Cada demanda pode receber uma das duas prioridades: **Alta** ou **Baixa** — ou ficar sem prioridade (livre).
+- **Alta:** o item deve ser alocado dentro das **duas primeiras semanas do mês** (aproximadamente os primeiros 10 dias úteis, índices 0–9 do calendário de trabalho).
+- **Baixa:** o item deve ser alocado no **restante do mês** (a partir do 11º dia útil, índices 10+ do calendário).
+- **Livre (sem prioridade):** o item não possui restrição temporal e preenche os buracos deixados pelos itens priorizados.
+- **Prioridade Absoluta:** O motor executa rodadas separadas. Todos os itens com prioridade definida são agendados cirurgicamente primeiro (respeitando cada janela). Os itens "Livres" apenas aproveitam as sobras de tempo (buracos na agenda).
+- **Atrelamento de Limite de Janela:** A capacidade de cada janela (Alta ou Baixa) é finita e calculada com base na meta. Demandas priorizadas disputam esse teto no modo *Primeiro a Chegar, Primeiro a Ocupar*.
+- **Atraso Restrito (Missed Directional):** Se a janela de uma prioridade estiver cheia e o item não couber, ele vai para a fila de **não-alocados** e é marcado imediatamente como **Atrasado** (identificável visualmente em vermelho e na métrica final). O Engineer deve realocar manualmente. Um item nunca é adiantado no calendário desrespeitando o fluxo natural de recebimento de material.
+
+> **Formato CSV:** coluna `prioridade` com valores `alta` ou `baixa`. Linhas sem valor nessa coluna são tratadas como livres.
 
 ## 3. O Teto Diário de Trabalho (Cap de Segurança / Water-filling)
 Independentemente do quanto uma entrega atrasou ou concentrou urgência, proteções contra fadiga agem como comportas intransponíveis para cada indivíduo:

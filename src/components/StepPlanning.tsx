@@ -310,12 +310,12 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
             : `${(totalDemandUP * (1 - coveragePercent / 100)).toFixed(2)} UP não alocadas`}
         />
         <MetricCard
-          label="Direcionais Ocupados"
+          label="Priorizados Alocados"
           value={`${directionalStats.obeyed} de ${directionalStats.requested}`}
           highlight={directionalStats.requested > 0 && directionalStats.overflowed === 0}
           sub={directionalStats.overflowed > 0
-            ? `${directionalStats.overflowed} transbordaram semana`
-            : directionalStats.requested === 0 ? 'Nenhum solicitado' : '100% no prazo certo'}
+            ? `${directionalStats.overflowed} não couberam na janela de prioridade`
+            : directionalStats.requested === 0 ? 'Nenhum solicitado' : '100% dentro da janela'}
         />
       </div>
 
@@ -339,7 +339,7 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-1 h-3 rounded bg-red-400" />
-          <span className="text-red-600">Atrasado (Passou da semana pedida)</span>
+          <span className="text-red-600">Atrasado (Fora da janela de prioridade)</span>
         </div>
         <span className="text-slate-400 ml-2">
           Cores são informativas — validade determinada pela média mensal
@@ -501,7 +501,7 @@ function UnassignedTable({ items }: { items: AllocationItem[] }) {
           <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-200">
             <span className="text-lg">📅</span>
             <p className="text-sm font-semibold text-orange-800">
-              {missedWeek.length} produção{missedWeek.length !== 1 ? 'ões' : ''} fora da semana preferencial — Engineer, realoque manualmente
+              {missedWeek.length} produção{missedWeek.length !== 1 ? 'ões' : ''} fora da janela de prioridade — Engineer, realoque manualmente
             </p>
           </div>
           <ItemTable rows={missedWeek}

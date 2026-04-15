@@ -7,17 +7,14 @@ export type ProductionType =
   | 'category_plan'
   | 'product_description_plan';
 
-export type PreferredWeek = 'semana_1' | 'semana_2' | 'semana_3' | 'semana_4' | 'ultima_semana';
+export type Priority = 'alta' | 'baixa';
 
-export const WEEK_LABELS: Record<PreferredWeek, string> = {
-  semana_1: 'Semana 1',
-  semana_2: 'Semana 2',
-  semana_3: 'Semana 3',
-  semana_4: 'Semana 4',
-  ultima_semana: 'Última semana (5 últimos dias)',
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  alta: 'Alta (1ª e 2ª semana)',
+  baixa: 'Baixa (restante do mês)',
 };
 
-export const WEEK_OPTIONS = Object.keys(WEEK_LABELS) as PreferredWeek[];
+export const PRIORITY_OPTIONS = Object.keys(PRIORITY_LABELS) as Priority[];
 
 
 export interface DemandItem {
@@ -30,7 +27,7 @@ export interface DemandItem {
   originalIndex: number;
   /** Up to 4 preferred pilot IDs; empty/absent = any pilot */
   preferredPilotIds?: string[];
-  preferredWeek?: PreferredWeek | null;
+  priority?: Priority | null;
 }
 
 export interface Pilot {
@@ -48,7 +45,7 @@ export interface AllocationItem {
   up: number;
   /** True when this item was redirected to a pilot that was NOT in preferredPilotIds */
   isSpillover?: boolean;
-  preferredWeek?: PreferredWeek | null;
+  priority?: Priority | null;
   missedDirectional?: boolean;
 }
 

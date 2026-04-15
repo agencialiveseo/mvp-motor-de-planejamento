@@ -1,20 +1,20 @@
-import type { DemandItem, Pilot, PilotSchedule, DistributionResult, AllocationItem, PreferredWeek } from '../types';
+import type { DemandItem, Pilot, PilotSchedule, DistributionResult, AllocationItem, Priority } from '../types';
 import { UP_CONSTANTS } from '../constants/productions';
 import { getWorkdays } from './dates';
 
 const MAX_DAILY_OVERAGE = 2; // (targetUP + 2) max per day
 const TOLERANCE = 0.05;
 
-/** Returns the valid day index bounds [startDay, endDay] for a given preferred week. */
-function getWeekBounds(week: PreferredWeek, numWorkdays: number): [number, number] {
+/** Returns the valid day index bounds [startDay, endDay] for a given priority level.
+ *  alta  → first two calendar weeks (workdays 0–9)
+ *  baixa → remainder of the month (workdays 10+)
+ */
+function getPriorityBounds(priority: Priority, numWorkdays: number): [number, number] {
   const maxD = numWorkdays - 1;
-  switch (week) {
-    case 'semana_1': return [0, Math.min(4, maxD)];
-    case 'semana_2': return [5, Math.min(9, maxD)];
-    case 'semana_3': return [10, Math.min(14, maxD)];
-    case 'semana_4': return [15, Math.min(19, maxD)];
-    case 'ultima_semana': return [Math.max(0, numWorkdays - 5), maxD];
-    default: return [0, maxD];
+  switch (priority) {
+    case 'alta':  return [0, Math.min(9, maxD)];
+    case 'baixa': return [Math.min(10, maxD), maxD];
+    default:      return [0, maxD];
   }
 }
 
@@ -34,7 +34,7 @@ function allocate(
     type: item.type,
     quantity: 1,
     up,
-    preferredWeek: item.preferredWeek,
+    priority: item.priority,
     missedDirectional: missedDirectional || undefined,
   };
   schedules[pilotIdx].days[dayIdx].items.push(alloc);
@@ -164,10 +164,10 @@ export function distribute(
 
   // Separate directed and free items
   let directedItems = expandedItems
-    .filter(i => !!i.preferredWeek)
+    .filter(i => !!i.priority)
     .sort((a, b) => a.originalIndex - b.originalIndex);
   let freeItems = expandedItems
-    .filter(i => !i.preferredWeek)
+    .filter(i => !i.priority)
     .sort((a, b) => a.originalIndex - b.originalIndex);
 
   // Change 6: pre-assign multi-pilot items proportionally
@@ -205,8 +205,8 @@ export function distribute(
     let wStart = 0;
     let wEnd = numWorkdays - 1;
 
-    if (isDirectedCheck && item.preferredWeek) {
-      const bounds = getWeekBounds(item.preferredWeek, numWorkdays);
+    if (isDirectedCheck && item.priority) {
+      const bounds = getPriorityBounds(item.priority, numWorkdays);
       wStart = bounds[0];
       wEnd = bounds[1];
     }
@@ -259,13 +259,13 @@ export function distribute(
     if (bestP === -1) {
       unassignedItems.push({
         demandId: item.id, client: item.client, type: item.type, quantity: 1, up: upPerUnit,
-        missedDirectional: item.preferredWeek ? true : undefined,
+        missedDirectional: item.priority ? true : undefined,
       });
       return false;
     }
 
     allocate(schedules, bestP, bestD, item, upPerUnit, pilotAllocated,
-      item.preferredWeek ? !isDirectedCheck : false);
+      item.priority ? !isDirectedCheck : false);
     dailyClientsArray[bestP][bestD].add(item.client);
     return true;
   }
