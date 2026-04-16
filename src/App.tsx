@@ -17,8 +17,8 @@ const EXAMPLE_DEMAND: DemandItem[] = [
 ];
 
 const EXAMPLE_PILOTS: Pilot[] = [
-  { id: 'p1', name: 'Emilly', targetUP: 4 },
-  { id: 'p2', name: 'Luna', targetUP: 4 },
+  { id: 'p1', name: 'Emilly', minUP: 4, maxUP: 4 },
+  { id: 'p2', name: 'Luna', minUP: 4, maxUP: 4 },
 ];
 
 export default function App() {

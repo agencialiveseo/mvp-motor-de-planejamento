@@ -56,7 +56,7 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
   );
 
   const totalCapacityUP = useMemo(
-    () => mutableSchedules.reduce((s, sch) => s + sch.pilot.targetUP * workdays.length, 0),
+    () => mutableSchedules.reduce((s, sch) => s + sch.pilot.minUP * workdays.length, 0),
     [mutableSchedules, workdays.length],
   );
 
@@ -65,7 +65,7 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
     : 0;
 
   const avgTargetUP = mutableSchedules.length > 0
-    ? mutableSchedules.reduce((s, sch) => s + sch.pilot.targetUP, 0) / mutableSchedules.length
+    ? mutableSchedules.reduce((s, sch) => s + sch.pilot.minUP, 0) / mutableSchedules.length
     : 4;
 
   const clients = useMemo(() => {
@@ -251,6 +251,18 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
                 {status === 'excess' && `Demanda: ${totalDemandUP.toFixed(2)} UP · Capacidade: ${totalCapacityUP.toFixed(0)} UP · Cobertura: ${coveragePercent.toFixed(1)}%`}
                 {status === 'idle' && `Média mensal: ${monthlyAvgUP.toFixed(2)} UP/dia · Demanda: ${totalDemandUP.toFixed(2)} UP`}
               </p>
+              {status === 'idle' && (
+                <p className="text-xs mt-2 text-blue-600">
+                  Equivale aproximadamente a:{' '}
+                  <strong>{Math.floor(diffUP * 1.5)} blogpost{Math.floor(diffUP * 1.5) !== 1 ? 's' : ''}</strong>
+                  {' · '}
+                  <strong>{Math.floor(diffUP * 1.67)} categoria{Math.floor(diffUP * 1.67) !== 1 ? 's' : ''}</strong>
+                  {' · '}
+                  <strong>{Math.floor(diffUP * 1.79)} desc. produto{Math.floor(diffUP * 1.79) !== 1 ? 's' : ''}</strong>
+                  {' · '}
+                  <strong>{Math.floor(diffUP * 135)} SERP{Math.floor(diffUP * 135) !== 1 ? 's' : ''}</strong>
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -291,7 +303,7 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
         <MetricCard
           label="Capacidade total"
           value={`${totalCapacityUP.toFixed(0)} UP`}
-          sub={mutableSchedules.map((s) => `${s.pilot.name}: ${s.pilot.targetUP} UP/dia`).join(' · ')}
+          sub={mutableSchedules.map((s) => `${s.pilot.name}: ${s.pilot.minUP}–${s.pilot.maxUP} UP/dia`).join(' · ')}
         />
         <MetricCard
           label="Média mensal / Pilot"
@@ -390,8 +402,14 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
       </div>
 
       {/* Tabela UP/dia por Pilot */}
-
       <UPPerDayTable schedules={mutableSchedules} workdays={workdays} />
+
+      {/* Campos informativos não-UP por Pilot */}
+      {mutableSchedules.some(s =>
+        s.pilot.tarefas || s.pilot.ajustePost || s.pilot.ajusteCat || s.pilot.ajusteSerp
+      ) && (
+        <NonUPTable schedules={mutableSchedules} />
+      )}
 
       {/* Modal de edição */}
       {modal.open && (
@@ -514,6 +532,49 @@ function UnassignedTable({ items }: { items: AllocationItem[] }) {
   );
 }
 
+function NonUPTable({ schedules }: { schedules: PilotSchedule[] }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="mt-4 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden no-print">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-5 py-3 bg-slate-50 border-b border-slate-200 hover:bg-slate-100 transition-colors"
+      >
+        <span className="text-sm font-semibold text-slate-700">
+          📋 Tarefas e ajustes por Pilot <span className="font-normal text-slate-400 text-xs ml-1">(informativo — não impacta o cálculo de UP)</span>
+        </span>
+        <span className="text-slate-400 text-xs">{open ? '▲ Recolher' : '▼ Expandir'}</span>
+      </button>
+      {open && (
+        <div className="overflow-x-auto">
+          <table className="text-xs w-full">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/50">
+                <th className="px-4 py-2 text-left font-semibold text-slate-500">Pilot</th>
+                <th className="px-3 py-2 text-center font-semibold text-slate-500">Tarefas</th>
+                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. Post</th>
+                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. Cat</th>
+                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. SERP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedules.map((sch) => (
+                <tr key={sch.pilot.id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                  <td className="px-4 py-2 font-medium text-slate-700">{sch.pilot.name}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.tarefas ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajustePost ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajusteCat ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajusteSerp ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UPPerDayTable({
   schedules,
   workdays,
@@ -563,19 +624,19 @@ function UPPerDayTable({
             </thead>
             <tbody>
               {schedules.map((sch) => {
-                const target = sch.pilot.targetUP;
+                const minUP = sch.pilot.minUP;
                 const totalUP = sch.days.reduce((s, d) => s + d.totalUP, 0);
                 const avg = workdays.length > 0 ? totalUP / workdays.length : 0;
-                const hitsTarget = avg >= target - 0.01;
+                const hitsTarget = avg >= minUP - 0.01;
                 return (
                   <tr key={sch.pilot.id} className="border-b border-slate-50 hover:bg-slate-50/60">
                     <td className="sticky left-0 bg-white px-4 py-2 font-medium text-slate-700 border-r border-slate-100">
                       {sch.pilot.name}
-                      <div className="text-slate-400 font-normal">meta: {target} UP/dia</div>
+                      <div className="text-slate-400 font-normal">mín: {minUP} · máx: {sch.pilot.maxUP} UP/dia</div>
                     </td>
                     {sch.days.map((day, di) => {
                       const up = day.totalUP;
-                      const overTarget = up >= target - 0.01;
+                      const overTarget = up >= minUP - 0.01;
                       const isEmpty = up < 0.01;
                       const cellBg = isEmpty
                         ? 'bg-slate-50 text-slate-300'

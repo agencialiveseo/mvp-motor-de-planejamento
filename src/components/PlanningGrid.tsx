@@ -88,7 +88,7 @@ export default function PlanningGrid({
 
                 {schedule.days.map((day, di) => {
                   const up = day.totalUP;
-                  const target = schedule.pilot.targetUP;
+                  const target = schedule.pilot.minUP;
                   const isGood = up >= target - 0.01;
                   const isEmpty = up < 0.01;
                   const isFree = di >= freeWeekStartIdx;

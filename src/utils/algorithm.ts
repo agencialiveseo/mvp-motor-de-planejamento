@@ -2,19 +2,16 @@ import type { DemandItem, Pilot, PilotSchedule, DistributionResult, AllocationIt
 import { UP_CONSTANTS } from '../constants/productions';
 import { getWorkdays } from './dates';
 
-const MAX_DAILY_OVERAGE = 2; // (targetUP + 2) max per day
 const TOLERANCE = 0.05;
 
 /** Returns the valid day index bounds [startDay, endDay] for a given priority level.
- *  alta  → first two calendar weeks (workdays 0–9)
- *  baixa → remainder of the month (workdays 10+)
+ *  alta → first two calendar weeks (workdays 0–9)
  */
 function getPriorityBounds(priority: Priority, numWorkdays: number): [number, number] {
   const maxD = numWorkdays - 1;
   switch (priority) {
-    case 'alta':  return [0, Math.min(9, maxD)];
-    case 'baixa': return [Math.min(10, maxD), maxD];
-    default:      return [0, maxD];
+    case 'alta': return [0, Math.min(9, maxD)];
+    default:     return [0, maxD];
   }
 }
 
@@ -78,7 +75,7 @@ function assignMultiPilotItems(items: DemandItem[], pilots: Pilot[]): DemandItem
   const result = [...items];
 
   groups.forEach(({ pilotIndices, count, itemIndices }) => {
-    const totalTarget = pilotIndices.reduce((s, i) => s + pilots[i].targetUP, 0);
+    const totalTarget = pilotIndices.reduce((s, i) => s + pilots[i].minUP, 0);
 
     itemIndices.forEach(idx => {
       const item = items[idx];
@@ -89,7 +86,7 @@ function assignMultiPilotItems(items: DemandItem[], pilots: Pilot[]): DemandItem
       let bestJ = 0;
       let bestDebt = -Infinity;
       for (let j = 0; j < pilotIndices.length; j++) {
-        const proportion = pilots[pilotIndices[j]].targetUP / totalTarget;
+        const proportion = pilots[pilotIndices[j]].minUP / totalTarget;
         const debt = proportion - count[j] / totalAssigned;
         if (debt > bestDebt) { bestDebt = debt; bestJ = j; }
       }
@@ -127,7 +124,7 @@ export function distribute(
     days: workdays.map((date) => ({ date, items: [], totalUP: 0 })),
   }));
 
-  const pilotCapacities = pilots.map((p) => p.targetUP * numWorkdays);
+  const pilotCapacities = pilots.map((p) => p.minUP * numWorkdays);
   const totalCapacityUP = pilotCapacities.reduce((s, c) => s + c, 0);
 
   // 1. Expand demands into quantity=1 blocks
@@ -161,6 +158,13 @@ export function distribute(
   const dailyClientsArray = pilots.map(() =>
     workdays.map(() => new Set<string>())
   );
+
+  // Se todas as demandas têm prioridade 'alta', tratar todas como Livre
+  // ("se tudo é prioridade, nada é prioridade entre si")
+  const allAreAlta = expandedItems.length > 0 && expandedItems.every(i => i.priority === 'alta');
+  if (allAreAlta) {
+    expandedItems.forEach(i => { i.priority = null; });
+  }
 
   // Separate directed and free items
   let directedItems = expandedItems
@@ -212,15 +216,15 @@ export function distribute(
     }
 
     for (const p of validCandidates) {
-      const dailyCap = pilots[p].targetUP + MAX_DAILY_OVERAGE;
-      const targetUP = pilots[p].targetUP;
+      const minUP = pilots[p].minUP;
+      const maxUP = pilots[p].maxUP;
 
-      // Change 1 — 4-pass day selection (front-load: fill to targetUP before starting next day)
+      // 4-pass day selection (front-load: fill to minUP before starting next day)
 
-      // Pass 1: Prefer under-target days + respect 3-client limit
+      // Pass 1: Prefer under-min days + respect 3-client limit
       for (let d = wStart; d <= wEnd; d++) {
-        if (schedules[p].days[d].totalUP >= targetUP - TOLERANCE) continue;
-        const room = dailyCap - schedules[p].days[d].totalUP;
+        if (schedules[p].days[d].totalUP >= minUP - TOLERANCE) continue;
+        const room = maxUP - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) {
           const cl = dailyClientsArray[p][d];
           if (cl.size < 3 || cl.has(item.client)) { bestP = p; bestD = d; break; }
@@ -228,17 +232,17 @@ export function distribute(
       }
       if (bestP !== -1) break;
 
-      // Pass 2: Prefer under-target days, ignore 3-client limit (only when unavoidable)
+      // Pass 2: Prefer under-min days, ignore 3-client limit (only when unavoidable)
       for (let d = wStart; d <= wEnd; d++) {
-        if (schedules[p].days[d].totalUP >= targetUP - TOLERANCE) continue;
-        const room = dailyCap - schedules[p].days[d].totalUP;
+        if (schedules[p].days[d].totalUP >= minUP - TOLERANCE) continue;
+        const room = maxUP - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) { bestP = p; bestD = d; break; }
       }
       if (bestP !== -1) break;
 
-      // Pass 3: Any day under dailyCap + respect 3-client limit (overflow when all days at target)
+      // Pass 3: Any day under maxUP + respect 3-client limit
       for (let d = wStart; d <= wEnd; d++) {
-        const room = dailyCap - schedules[p].days[d].totalUP;
+        const room = maxUP - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) {
           const cl = dailyClientsArray[p][d];
           if (cl.size < 3 || cl.has(item.client)) { bestP = p; bestD = d; break; }
@@ -246,9 +250,9 @@ export function distribute(
       }
       if (bestP !== -1) break;
 
-      // Pass 4: Any day under dailyCap, ignore 3-client limit (last resort)
+      // Pass 4: Any day under maxUP, ignore 3-client limit (last resort)
       for (let d = wStart; d <= wEnd; d++) {
-        const room = dailyCap - schedules[p].days[d].totalUP;
+        const room = maxUP - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) { bestP = p; bestD = d; break; }
       }
       if (bestP !== -1) break;

@@ -131,14 +131,14 @@ export default function StepDemand({
 
   const workdays = getWorkdays(year, month);
   const totalDemandUP = demandItems.reduce((sum, i) => sum + calcUP(i.type, i.quantity), 0);
-  const totalCapacityUP = pilots.reduce((s, p) => s + p.targetUP * workdays.length, 0);
+  const totalCapacityUP = pilots.reduce((s, p) => s + p.minUP * workdays.length, 0);
   const diff = totalCapacityUP - totalDemandUP;
   const monthlyAvgPerPilot =
     workdays.length > 0 && pilots.length > 0
       ? totalDemandUP / (workdays.length * pilots.length)
       : 0;
   const avgTargetUP =
-    pilots.length > 0 ? pilots.reduce((s, p) => s + p.targetUP, 0) / pilots.length : 4;
+    pilots.length > 0 ? pilots.reduce((s, p) => s + p.minUP, 0) / pilots.length : 4;
 
   function updateItem(id: string, changes: Partial<DemandItem>) {
     onDemandChange(demandItems.map((item) => (item.id === id ? { ...item, ...changes } : item)));
@@ -154,7 +154,7 @@ export default function StepDemand({
   function downloadTemplate() {
     const header = 'cliente,tipo,quantidade,pilots_preferenciais,prioridade';
     const ex1 = `Loja Exemplo,${PRODUCTION_TYPES[0]},4,${pilots[0]?.name ?? 'PilotA'},alta`;
-    const ex2 = `Cliente Beta,${PRODUCTION_TYPES[1]},2,${pilots[0]?.name ?? 'PilotA'};${pilots[1]?.name ?? 'PilotB'},baixa`;
+    const ex2 = `Cliente Beta,${PRODUCTION_TYPES[1]},2,${pilots[0]?.name ?? 'PilotA'};${pilots[1]?.name ?? 'PilotB'},`;
     downloadFile([header, ex1, ex2].join('\n'), 'modelo_demanda.csv', 'text/csv');
   }
 
@@ -327,7 +327,7 @@ export default function StepDemand({
                       onChange={(e) => updateItem(item.id, { priority: (e.target.value as Priority) || null })}
                       className="w-full border border-slate-200 rounded px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     >
-                      <option value="">Livre (sem prioridade)</option>
+                      <option value="">Livre</option>
                       {PRIORITY_OPTIONS.map((p) => (
                         <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
                       ))}
@@ -388,7 +388,7 @@ export default function StepDemand({
 
         {/* CSV format hint */}
         <p className="text-xs text-slate-400 mb-6">
-          Formato CSV: <code className="bg-slate-100 px-1 rounded">cliente, tipo, quantidade, pilots_preferenciais, prioridade</code> — valores válidos para prioridade: <code className="bg-slate-100 px-1 rounded">alta</code> (1ª e 2ª semana) ou <code className="bg-slate-100 px-1 rounded">baixa</code> (restante do mês)
+          Formato CSV: <code className="bg-slate-100 px-1 rounded">cliente, tipo, quantidade, pilots_preferenciais, prioridade</code> — valores válidos para prioridade: <code className="bg-slate-100 px-1 rounded">alta</code> (1ª e 2ª semana) ou deixar em branco para Livre
         </p>
 
         <div className="flex justify-between">
@@ -422,7 +422,7 @@ export default function StepDemand({
                 <p className="text-xs text-slate-500 mb-1">Capacidade total</p>
                 <p className="text-2xl font-bold text-slate-800">{totalCapacityUP.toFixed(0)}</p>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {pilots.map((p) => `${p.name}: ${p.targetUP} UP/dia`).join(' · ')}
+                  {pilots.map((p) => `${p.name}: ${p.minUP}–${p.maxUP} UP/dia`).join(' · ')}
                 </p>
               </div>
               <div>

@@ -7,11 +7,10 @@ export type ProductionType =
   | 'category_plan'
   | 'product_description_plan';
 
-export type Priority = 'alta' | 'baixa';
+export type Priority = 'alta';
 
 export const PRIORITY_LABELS: Record<Priority, string> = {
-  alta: 'Alta (1ª e 2ª semana)',
-  baixa: 'Baixa (restante do mês)',
+  alta: 'Alta',
 };
 
 export const PRIORITY_OPTIONS = Object.keys(PRIORITY_LABELS) as Priority[];
@@ -33,8 +32,12 @@ export interface DemandItem {
 export interface Pilot {
   id: string;
   name: string;
-  /** Item 2: individual daily target (min 4) */
-  targetUP: number;
+  minUP: number;
+  maxUP: number;
+  tarefas?: number;
+  ajustePost?: number;
+  ajusteCat?: number;
+  ajusteSerp?: number;
 }
 
 export interface AllocationItem {
