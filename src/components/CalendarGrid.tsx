@@ -26,7 +26,7 @@ function NotePopoverBox({
     text, textareaRef, onChange, onSave, onClose,
 }: {
     text: string;
-    textareaRef: React.RefObject<HTMLTextAreaElement>;
+    textareaRef: React.RefObject<HTMLTextAreaElement | null>;
     onChange: (t: string) => void;
     onSave: () => void;
     onClose: () => void;
