@@ -17,7 +17,7 @@ interface Props {
 const MAX_PILOTS = 4;
 
 function newItem(index: number): DemandItem {
-  return { id: crypto.randomUUID(), client: '', type: 'blogpost_produce', quantity: 1, remainingQty: 1, upPerUnit: 1, originalIndex: index, preferredPilotIds: [], priority: null };
+  return { id: crypto.randomUUID(), client: '', type: 'blogpost_produce', quantity: 1, remainingQty: 1, upPerUnit: 1, originalIndex: index, preferredPilotIds: [], priority: null, note: '' };
 }
 
 /** Normalise a production type string from CSV (label or key). */
@@ -128,6 +128,15 @@ export default function StepDemand({
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [csvError, setCsvError] = useState<string | null>(null);
+  const [openNoteIds, setOpenNoteIds] = useState<Set<string>>(() => new Set());
+
+  function toggleNote(id: string) {
+    setOpenNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   const workdays = getWorkdays(year, month);
   const totalDemandUP = demandItems.reduce((sum, i) => sum + calcUP(i.type, i.quantity), 0);
@@ -266,83 +275,114 @@ export default function StepDemand({
                 <th className="text-right px-3 py-3 font-semibold text-slate-600">UP</th>
                 <th className="text-left px-3 py-3 font-semibold text-slate-600">
                   Pilots preferenciais
-                  <span className="ml-1 text-xs font-normal text-slate-400">(máx. {MAX_PILOTS})</span>
                 </th>
                 <th className="text-left px-3 py-3 font-semibold text-slate-600">Prioridade</th>
+                <th className="px-3 py-3 font-semibold text-slate-600 text-center" title="Nota para o Pilot">📝</th>
                 <th className="px-3 py-3 rounded-tr-xl" />
               </tr>
             </thead>
             <tbody>
               {demandItems.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center text-slate-400 py-8">
+                  <td colSpan={9} className="text-center text-slate-400 py-8">
                     Nenhum item adicionado. Clique em "Adicionar linha" ou importe um CSV.
                   </td>
                 </tr>
               )}
-              {demandItems.map((item, idx) => (
-                <tr key={item.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
-                  <td className="px-3 py-2">
-                    <input
-                      type="text"
-                      value={item.client}
-                      onChange={(e) => updateItem(item.id, { client: e.target.value })}
-                      placeholder="Cliente..."
-                      className="w-full border border-slate-200 rounded px-2 py-1 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={item.type}
-                      onChange={(e) => updateItem(item.id, { type: e.target.value as ProductionType })}
-                      className="w-full border border-slate-200 rounded px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {PRODUCTION_TYPES.map((t) => (
-                        <option key={t} value={t}>{PRODUCTION_LABELS[t]}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      type="number"
-                      min={1}
-                      value={item.quantity}
-                      onChange={(e) => updateItem(item.id, { quantity: Math.max(1, Number(e.target.value)) })}
-                      className="w-16 text-right border border-slate-200 rounded px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-slate-700 font-medium whitespace-nowrap">
-                    {calcUP(item.type, item.quantity).toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2 min-w-[160px]">
-                    <PilotMultiSelect
-                      pilots={pilots}
-                      selectedIds={item.preferredPilotIds ?? []}
-                      onChange={(ids) => updateItem(item.id, { preferredPilotIds: ids })}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={item.priority || ''}
-                      onChange={(e) => updateItem(item.id, { priority: (e.target.value as Priority) || null })}
-                      className="w-full border border-slate-200 rounded px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                    >
-                      <option value="">Livre</option>
-                      {PRIORITY_OPTIONS.map((p) => (
-                        <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    <button
-                      onClick={() => removeItem(item.id)}
-                      className="text-slate-400 hover:text-red-500 transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {demandItems.map((item, idx) => {
+                const hasNote = !!item.note?.trim();
+                const noteOpen = openNoteIds.has(item.id);
+                return (
+                  <>
+                    <tr key={item.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={item.client}
+                          onChange={(e) => updateItem(item.id, { client: e.target.value })}
+                          placeholder="Cliente..."
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={item.type}
+                          onChange={(e) => updateItem(item.id, { type: e.target.value as ProductionType })}
+                          className="w-full border border-slate-200 rounded px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {PRODUCTION_TYPES.map((t) => (
+                            <option key={t} value={t}>{PRODUCTION_LABELS[t]}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min={1}
+                          value={item.quantity}
+                          onChange={(e) => updateItem(item.id, { quantity: Math.max(1, Number(e.target.value)) })}
+                          className="w-16 text-right border border-slate-200 rounded px-2 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-700 font-medium whitespace-nowrap">
+                        {calcUP(item.type, item.quantity).toFixed(2)}
+                      </td>
+                      <td className="px-3 py-2 min-w-[160px]">
+                        <PilotMultiSelect
+                          pilots={pilots}
+                          selectedIds={item.preferredPilotIds ?? []}
+                          onChange={(ids) => updateItem(item.id, { preferredPilotIds: ids })}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={item.priority || ''}
+                          onChange={(e) => updateItem(item.id, { priority: (e.target.value as Priority) || null })}
+                          className="w-full border border-slate-200 rounded px-2 py-1.5 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        >
+                          <option value="">Livre</option>
+                          {PRIORITY_OPTIONS.map((p) => (
+                            <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => toggleNote(item.id)}
+                          title={hasNote ? 'Ver/editar nota' : 'Adicionar nota'}
+                          className={`text-base transition-all rounded px-1 ${hasNote ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-amber-400'}`}
+                        >
+                          📝
+                        </button>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => removeItem(item.id)}
+                          className="text-slate-400 hover:text-red-500 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                    {noteOpen && (
+                      <tr key={`note-${item.id}`} className={idx % 2 === 0 ? 'bg-amber-50/60' : 'bg-amber-50/40'}>
+                        <td colSpan={9} className="px-4 py-2">
+                          <div className="flex items-start gap-2">
+                            <span className="text-amber-500 mt-1.5 text-sm flex-shrink-0">📝</span>
+                            <textarea
+                              value={item.note ?? ''}
+                              onChange={(e) => updateItem(item.id, { note: e.target.value })}
+                              placeholder="Nota para o Pilot: palavra-chave, FAQs, referências..."
+                              rows={2}
+                              className="flex-1 border border-amber-200 rounded-lg px-3 py-1.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white resize-none"
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
             </tbody>
           </table>
         </div>

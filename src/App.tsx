@@ -16,9 +16,10 @@ const EXAMPLE_DEMAND: DemandItem[] = [
   { id: '6', client: 'SG Sistemas', type: 'blogpost_produce', quantity: 12, remainingQty: 12, upPerUnit: 1.5, originalIndex: 5 },
 ];
 
+/** Mudança 2: EXAMPLE_PILOTS agora inclui minUP e maxUP */
 const EXAMPLE_PILOTS: Pilot[] = [
-  { id: 'p1', name: 'Emilly', minUP: 4, maxUP: 4 },
-  { id: 'p2', name: 'Luna', minUP: 4, maxUP: 4 },
+  { id: 'p1', name: 'Emilly', targetUP: 4, minUP: 4, maxUP: 6 },
+  { id: 'p2', name: 'Luna', targetUP: 4, minUP: 4, maxUP: 6 },
 ];
 
 export default function App() {
@@ -27,7 +28,9 @@ export default function App() {
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [pilots, setPilots] = useState<Pilot[]>([]);
-  const [defaultTargetUP, setDefaultTargetUP] = useState(4);
+  const defaultTargetUP = 4;
+  const defaultMinUP = 4;
+  const defaultMaxUP = 6;
   const [demandItems, setDemandItems] = useState<DemandItem[]>([]);
   const [result, setResult] = useState<DistributionResult | null>(null);
 
@@ -111,10 +114,11 @@ export default function App() {
             year={year}
             pilots={pilots}
             defaultTargetUP={defaultTargetUP}
+            defaultMinUP={defaultMinUP}
+            defaultMaxUP={defaultMaxUP}
             onMonthChange={setMonth}
             onYearChange={setYear}
             onPilotsChange={setPilots}
-            onDefaultTargetUPChange={setDefaultTargetUP}
             onNext={() => setStep(2)}
           />
         )}

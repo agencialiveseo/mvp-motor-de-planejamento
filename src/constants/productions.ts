@@ -12,6 +12,10 @@ export const UP_CONSTANTS: Record<ProductionType, number> = {
   blogpost_plan: 5.73,
   category_plan: 9.28,
   product_description_plan: 9.28,
+  tarefas: Infinity,
+  ajuste_post: Infinity,
+  ajuste_cat: Infinity,
+  ajuste_serp: Infinity,
 };
 
 export const PRODUCTION_LABELS: Record<ProductionType, string> = {
@@ -22,6 +26,10 @@ export const PRODUCTION_LABELS: Record<ProductionType, string> = {
   blogpost_plan: 'Planejar blogpost',
   category_plan: 'Planejar categoria',
   product_description_plan: 'Planejar descrição de produto',
+  tarefas: 'Tarefas',
+  ajuste_post: 'Ajuste Post',
+  ajuste_cat: 'Ajuste Categoria',
+  ajuste_serp: 'Ajuste SERP',
 };
 
 export const PRODUCTION_TYPES = Object.keys(UP_CONSTANTS) as ProductionType[];

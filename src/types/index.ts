@@ -5,7 +5,11 @@ export type ProductionType =
   | 'serp_produce'
   | 'blogpost_plan'
   | 'category_plan'
-  | 'product_description_plan';
+  | 'product_description_plan'
+  | 'tarefas'
+  | 'ajuste_post'
+  | 'ajuste_cat'
+  | 'ajuste_serp';
 
 export type Priority = 'alta';
 
@@ -27,17 +31,20 @@ export interface DemandItem {
   /** Up to 4 preferred pilot IDs; empty/absent = any pilot */
   preferredPilotIds?: string[];
   priority?: Priority | null;
+  /** Optional note from the Engineer for the Pilot */
+  note?: string;
 }
 
+/** Mudança 2: campos de intervalo UP/dia por pilot */
 export interface Pilot {
   id: string;
   name: string;
+  /** Mínimo de UP/dia — valor informativo e floor de alocação */
   minUP: number;
+  /** Máximo de UP/dia — teto de alocação (substitui targetUP + MAX_DAILY_OVERAGE) */
   maxUP: number;
-  tarefas?: number;
-  ajustePost?: number;
-  ajusteCat?: number;
-  ajusteSerp?: number;
+  /** Meta diária de UP (base para cálculo de capacidade) */
+  targetUP: number;
 }
 
 export interface AllocationItem {
@@ -50,6 +57,10 @@ export interface AllocationItem {
   isSpillover?: boolean;
   priority?: Priority | null;
   missedDirectional?: boolean;
+  /** Mudança 7: true quando este item foi deslocado por um item de prioridade Alta no fallback */
+  displacedByHighPriority?: boolean;
+  /** Note from the Engineer for the Pilot */
+  note?: string;
 }
 
 export interface DayAllocation {

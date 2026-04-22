@@ -4,14 +4,17 @@ import { getWorkdays } from './dates';
 
 const TOLERANCE = 0.05;
 
-/** Returns the valid day index bounds [startDay, endDay] for a given priority level.
- *  alta → first two calendar weeks (workdays 0–9)
+/**
+ * Returns the valid day index bounds [startDay, endDay] for a given priority level.
+ *  alta  → first two calendar weeks (workdays 0–9)
+ *  baixa → remainder of the month (workdays 10+) [used internally for Round 2 fallback]
  */
-function getPriorityBounds(priority: Priority, numWorkdays: number): [number, number] {
+function getPriorityBounds(priority: Priority | 'baixa', numWorkdays: number): [number, number] {
   const maxD = numWorkdays - 1;
   switch (priority) {
-    case 'alta': return [0, Math.min(9, maxD)];
-    default:     return [0, maxD];
+    case 'alta':  return [0, Math.min(9, maxD)];
+    case 'baixa': return [Math.min(10, maxD), maxD];
+    default:      return [0, maxD];
   }
 }
 
@@ -33,6 +36,7 @@ function allocate(
     up,
     priority: item.priority,
     missedDirectional: missedDirectional || undefined,
+    note: item.note || undefined,
   };
   schedules[pilotIdx].days[dayIdx].items.push(alloc);
   schedules[pilotIdx].days[dayIdx].totalUP += up;
@@ -42,8 +46,6 @@ function allocate(
 /**
  * Pre-assigns items that have MULTIPLE preferred pilots to a single pilot each,
  * distributing proportionally based on each pilot's targetUP.
- *
- * This ensures both pilots receive items from day 1 (Change 6).
  */
 function assignMultiPilotItems(items: DemandItem[], pilots: Pilot[]): DemandItem[] {
   type GroupData = {
@@ -75,18 +77,16 @@ function assignMultiPilotItems(items: DemandItem[], pilots: Pilot[]): DemandItem
   const result = [...items];
 
   groups.forEach(({ pilotIndices, count, itemIndices }) => {
-    const totalTarget = pilotIndices.reduce((s, i) => s + pilots[i].minUP, 0);
+    const totalTarget = pilotIndices.reduce((s, i) => s + pilots[i].targetUP, 0);
 
     itemIndices.forEach(idx => {
       const item = items[idx];
       const totalAssigned = count.reduce((s, a) => s + a, 0) || 1e-10;
 
-      // Pick the pilot with the highest "debt" (proportion needed − proportion assigned so far).
-      // This is a Bresenham-like proportional distribution.
       let bestJ = 0;
       let bestDebt = -Infinity;
       for (let j = 0; j < pilotIndices.length; j++) {
-        const proportion = pilots[pilotIndices[j]].minUP / totalTarget;
+        const proportion = pilots[pilotIndices[j]].targetUP / totalTarget;
         const debt = proportion - count[j] / totalAssigned;
         if (debt > bestDebt) { bestDebt = debt; bestJ = j; }
       }
@@ -100,14 +100,19 @@ function assignMultiPilotItems(items: DemandItem[], pilots: Pilot[]): DemandItem
 }
 
 /**
- * Distributes unitized demand items across pilots (V6 Algorithm)
+ * Distributes unitized demand items across pilots (V7 Algorithm)
  *
- * Changes vs V5:
- *  1. Front-loading: days fill to targetUP before a new day starts (4-pass selection).
- *  4. No overflow weeks: directed items that can't fit in their preferred week go to
- *     unassigned for the engineer to manually redirect.
- *  5. emptyDays included in idlePilots for actionable alert.
- *  6. Multi-pilot items pre-assigned proportionally so both pilots start from day 1.
+ * Changes vs V6:
+ *  - Mudança 1: allHigh check → if 100% of items are 'alta', treat all as 'livre'
+ *  - Mudança 2: use pilot.maxUP as daily ceiling (replaces targetUP + MAX_DAILY_OVERAGE)
+ *  - Mudança 7: Round 3 fallback — Alta items that didn't fit in weeks 1-2 displace
+ *               Baixa items from weeks 3-4 (marked displacedByHighPriority: true)
+ *
+ * Round order:
+ *  Round 1 — Alta in window (days 0–9)
+ *  Round 2 — Free/Livre items fill remaining space
+ *  Round 3 — Alta fallback (altaOverflow → days 10+, displacing items if needed)
+ *  [Round 4] — not needed since free items come before round 3 for simplicity
  */
 export function distribute(
   demandItems: DemandItem[],
@@ -124,7 +129,7 @@ export function distribute(
     days: workdays.map((date) => ({ date, items: [], totalUP: 0 })),
   }));
 
-  const pilotCapacities = pilots.map((p) => p.minUP * numWorkdays);
+  const pilotCapacities = pilots.map((p) => p.targetUP * numWorkdays);
   const totalCapacityUP = pilotCapacities.reduce((s, c) => s + c, 0);
 
   // 1. Expand demands into quantity=1 blocks
@@ -159,29 +164,38 @@ export function distribute(
     workdays.map(() => new Set<string>())
   );
 
-  // Se todas as demandas têm prioridade 'alta', tratar todas como Livre
-  // ("se tudo é prioridade, nada é prioridade entre si")
-  const allAreAlta = expandedItems.length > 0 && expandedItems.every(i => i.priority === 'alta');
-  if (allAreAlta) {
-    expandedItems.forEach(i => { i.priority = null; });
-  }
-
-  // Separate directed and free items
+  // Separate directed (alta) and free items
   let directedItems = expandedItems
-    .filter(i => !!i.priority)
+    .filter(i => i.priority === 'alta')
     .sort((a, b) => a.originalIndex - b.originalIndex);
   let freeItems = expandedItems
     .filter(i => !i.priority)
     .sort((a, b) => a.originalIndex - b.originalIndex);
 
-  // Change 6: pre-assign multi-pilot items proportionally
+  // Mudança 1: if ALL items from this engineer are 'alta', treat them all as 'livre'
+  const allItemsAreAlta =
+    expandedItems.length > 0 && expandedItems.every(item => item.priority === 'alta');
+  if (allItemsAreAlta) {
+    freeItems = [...directedItems, ...freeItems].sort((a, b) => a.originalIndex - b.originalIndex);
+    directedItems = [];
+  }
+
+  // Pre-assign multi-pilot items proportionally
   directedItems = assignMultiPilotItems(directedItems, pilots);
   freeItems = assignMultiPilotItems(freeItems, pilots);
 
   directionalStats.requested = directedItems.length;
 
-  /** Attempt to place one expanded item. Returns true on success. */
-  function processUnit(item: DemandItem, isDirectedCheck: boolean): boolean {
+  /**
+   * Attempt to place one expanded item in the given day range.
+   * Returns true on success.
+   */
+  function processUnit(
+    item: DemandItem,
+    wStart: number,
+    wEnd: number,
+    isDirectedCheck: boolean
+  ): boolean {
     const upPerUnit = item.upPerUnit;
 
     const preferredIdxList: number[] = (item.preferredPilotIds ?? [])
@@ -192,7 +206,7 @@ export function distribute(
       preferredIdxList.length > 0 ? preferredIdxList : pilots.map((_, i) => i);
 
     if (validCandidates.length === 0) {
-      unassignedItems.push({ demandId: item.id, client: item.client, type: item.type, quantity: 1, up: upPerUnit });
+      unassignedItems.push({ demandId: item.id, client: item.client, type: item.type, quantity: 1, up: upPerUnit, note: item.note || undefined });
       return false;
     }
 
@@ -206,25 +220,15 @@ export function distribute(
     let bestP = -1;
     let bestD = -1;
 
-    let wStart = 0;
-    let wEnd = numWorkdays - 1;
-
-    if (isDirectedCheck && item.priority) {
-      const bounds = getPriorityBounds(item.priority, numWorkdays);
-      wStart = bounds[0];
-      wEnd = bounds[1];
-    }
-
     for (const p of validCandidates) {
-      const minUP = pilots[p].minUP;
-      const maxUP = pilots[p].maxUP;
+      // Mudança 2: use pilot.maxUP as daily ceiling
+      const dailyCap = pilots[p].maxUP;
+      const targetUP = pilots[p].targetUP;
 
-      // 4-pass day selection (front-load: fill to minUP before starting next day)
-
-      // Pass 1: Prefer under-min days + respect 3-client limit
+      // Pass 1: under-target days + respect 3-client limit
       for (let d = wStart; d <= wEnd; d++) {
-        if (schedules[p].days[d].totalUP >= minUP - TOLERANCE) continue;
-        const room = maxUP - schedules[p].days[d].totalUP;
+        if (schedules[p].days[d].totalUP >= targetUP - TOLERANCE) continue;
+        const room = dailyCap - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) {
           const cl = dailyClientsArray[p][d];
           if (cl.size < 3 || cl.has(item.client)) { bestP = p; bestD = d; break; }
@@ -232,17 +236,17 @@ export function distribute(
       }
       if (bestP !== -1) break;
 
-      // Pass 2: Prefer under-min days, ignore 3-client limit (only when unavoidable)
+      // Pass 2: under-target days, ignore 3-client limit
       for (let d = wStart; d <= wEnd; d++) {
-        if (schedules[p].days[d].totalUP >= minUP - TOLERANCE) continue;
-        const room = maxUP - schedules[p].days[d].totalUP;
+        if (schedules[p].days[d].totalUP >= targetUP - TOLERANCE) continue;
+        const room = dailyCap - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) { bestP = p; bestD = d; break; }
       }
       if (bestP !== -1) break;
 
-      // Pass 3: Any day under maxUP + respect 3-client limit
+      // Pass 3: any day under dailyCap + respect 3-client limit
       for (let d = wStart; d <= wEnd; d++) {
-        const room = maxUP - schedules[p].days[d].totalUP;
+        const room = dailyCap - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) {
           const cl = dailyClientsArray[p][d];
           if (cl.size < 3 || cl.has(item.client)) { bestP = p; bestD = d; break; }
@@ -250,9 +254,9 @@ export function distribute(
       }
       if (bestP !== -1) break;
 
-      // Pass 4: Any day under maxUP, ignore 3-client limit (last resort)
+      // Pass 4: any day under dailyCap, ignore 3-client limit (last resort)
       for (let d = wStart; d <= wEnd; d++) {
-        const room = maxUP - schedules[p].days[d].totalUP;
+        const room = dailyCap - schedules[p].days[d].totalUP;
         if (room >= upPerUnit - TOLERANCE) { bestP = p; bestD = d; break; }
       }
       if (bestP !== -1) break;
@@ -264,6 +268,7 @@ export function distribute(
       unassignedItems.push({
         demandId: item.id, client: item.client, type: item.type, quantity: 1, up: upPerUnit,
         missedDirectional: item.priority ? true : undefined,
+        note: item.note || undefined,
       });
       return false;
     }
@@ -274,28 +279,94 @@ export function distribute(
     return true;
   }
 
-  // Process directed items — Change 4: NO automatic overflow to later weeks.
-  // If the item can't fit in its preferred week, the engineer must manually redirect it.
+  // ── Round 1: Alta in window (days 0–9) ───────────────────────────────────
+  const altaOverflow: DemandItem[] = [];
+  const altaBounds = getPriorityBounds('alta', numWorkdays);
+
   for (const item of directedItems) {
-    const succeeded = processUnit(item, true);
+    const succeeded = processUnit(item, altaBounds[0], altaBounds[1], true);
     if (succeeded) {
       directionalStats.obeyed++;
     } else {
       directionalStats.overflowed++;
-      unassignedItems.push({
-        demandId: item.id,
-        client: item.client,
-        type: item.type,
-        quantity: 1,
-        up: item.upPerUnit,
-        missedDirectional: true,
-      });
+      altaOverflow.push(item); // will be tried in Round 3
     }
   }
 
-  // Process free items
+  // ── Round 2: Free items fill all available slots ──────────────────────────
+  const freeBounds: [number, number] = [0, numWorkdays - 1];
   for (const item of freeItems) {
-    processUnit(item, false);
+    processUnit(item, freeBounds[0], freeBounds[1], false);
+  }
+
+  // ── Round 3 (Mudança 7): Alta fallback — try days 10+ ────────────────────
+  if (altaOverflow.length > 0) {
+    const fallbackStart = getPriorityBounds('baixa', numWorkdays)[0];
+    const fallbackEnd = numWorkdays - 1;
+
+    for (const altaItem of altaOverflow) {
+      const upPerUnit = altaItem.upPerUnit;
+
+      const preferredIdxList: number[] = (altaItem.preferredPilotIds ?? [])
+        .map((id) => pilots.findIndex((p) => p.id === id))
+        .filter((idx) => idx >= 0);
+      const candidates =
+        preferredIdxList.length > 0 ? preferredIdxList : pilots.map((_, i) => i);
+
+      let placed = false;
+
+      for (const p of candidates) {
+        if (placed) break;
+        const dailyCap = pilots[p].maxUP;
+
+        for (let d = fallbackStart; d <= fallbackEnd; d++) {
+          const day = schedules[p].days[d];
+          const room = dailyCap - day.totalUP;
+
+          if (room >= upPerUnit - TOLERANCE) {
+            // Slot has room — place directly
+            allocate(schedules, p, d, altaItem, upPerUnit, pilotAllocated, false);
+            dailyClientsArray[p][d].add(altaItem.client);
+            placed = true;
+            break;
+          }
+
+          // No room — try to displace a free/livre item to make space
+          const displaceIdx = day.items.findIndex(
+            it => !it.priority && !it.displacedByHighPriority
+          );
+          if (displaceIdx !== -1) {
+            const displaced = day.items[displaceIdx];
+            // Remove displaced item from day
+            day.items.splice(displaceIdx, 1);
+            day.totalUP -= displaced.up;
+            pilotAllocated[p] -= displaced.up;
+
+            // Mark as displaced and move to unassigned
+            unassignedItems.push({ ...displaced, displacedByHighPriority: true });
+
+            // Place alta item in freed slot
+            allocate(schedules, p, d, altaItem, upPerUnit, pilotAllocated, false);
+            dailyClientsArray[p][d].add(altaItem.client);
+            placed = true;
+            break;
+          }
+        }
+      }
+
+      if (!placed) {
+        // Still couldn't place — add to unassigned
+        unassignedItems.push({
+          demandId: altaItem.id,
+          client: altaItem.client,
+          type: altaItem.type,
+          quantity: 1,
+          up: upPerUnit,
+          missedDirectional: true,
+          note: altaItem.note || undefined,
+        });
+      }
+    }
   }
 
   // Change 5: Count empty days per pilot for actionable alerts

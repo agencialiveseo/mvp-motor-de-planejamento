@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { DemandItem, DistributionResult, PilotSchedule, AllocationItem, ProductionType } from '../types';
 import { MONTH_NAMES } from '../utils/dates';
 import { PRODUCTION_LABELS, UP_CONSTANTS } from '../constants/productions';
@@ -7,6 +7,20 @@ import EditModal from './EditModal';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generatePilotWorkbook } from '../utils/exportExcel';
+
+const LEGEND_ITEMS: { label: string; type: ProductionType }[] = [
+  { label: 'Blogpost', type: 'blogpost_produce' },
+  { label: 'Categoria', type: 'category_produce' },
+  { label: 'Descrição', type: 'product_description_produce' },
+  { label: 'SERP', type: 'serp_produce' },
+  { label: 'Plan. Blog', type: 'blogpost_plan' },
+  { label: 'Plan. Cat.', type: 'category_plan' },
+  { label: 'Plan. Desc.', type: 'product_description_plan' },
+  { label: 'Tarefas', type: 'tarefas' },
+  { label: 'Aj. Post', type: 'ajuste_post' },
+  { label: 'Aj. Cat.', type: 'ajuste_cat' },
+  { label: 'Aj. SERP', type: 'ajuste_serp' },
+];
 
 
 interface Props {
@@ -21,6 +35,10 @@ type ModalState =
   | { open: false }
   | { open: true; isNew: true; pilotIdx: number; dayIdx: number }
   | { open: true; isNew: false; pilotIdx: number; dayIdx: number; itemIdx: number };
+
+type SwapModalState =
+  | { open: false }
+  | { open: true; incomingClient: string; incomingType: AllocationItem['type']; incomingCount: number; incomingUP: number };
 
 function deepCopySchedules(schedules: PilotSchedule[]): PilotSchedule[] {
   return schedules.map((s) => ({
@@ -37,11 +55,21 @@ function recomputeDayUP(day: { items: AllocationItem[]; totalUP: number }): void
 }
 export default function StepPlanning({ result, demandItems, month, year, onBack }: Props) {
   const [mutableSchedules, setMutableSchedules] = useState(() => deepCopySchedules(result.schedules));
+  const [localUnassigned, setLocalUnassigned] = useState<AllocationItem[]>(() => [...result.unassignedItems]);
   const [checkedItems, setCheckedItems] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalState>({ open: false });
   const [isExporting, setIsExporting] = useState(false);
+  const [showSimulator, setShowSimulator] = useState(false);
+  const [simQty, setSimQty] = useState<Record<string, number>>({
+    blogpost_produce: 0, category_produce: 0, product_description_produce: 0,
+    serp_produce: 0, blogpost_plan: 0, category_plan: 0,
+  });
+  const [swapModal, setSwapModal] = useState<SwapModalState>({ open: false });
+  const [swapCedenteKey, setSwapCedenteKey] = useState('');
+  const [swapQty, setSwapQty] = useState(1);
+  const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
 
-  const { workdays, unassignedItems, idlePilots, totalDemandUP, coveragePercent, status, diffUP, directionalStats } = result;
+  const { workdays, idlePilots, totalDemandUP, coveragePercent, status, diffUP, directionalStats } = result;
 
   // Pilot Filter State (Initially all selected)
   const [selectedPilotIds, setSelectedPilotIds] = useState<Set<string>>(() =>
@@ -91,7 +119,7 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
     setModal({ open: true, isNew: true, pilotIdx, dayIdx });
   }
 
-  function handleSave(client: string, type: ProductionType, quantity: number) {
+  function handleSave(client: string, type: ProductionType, quantity: number, note: string) {
     if (!modal.open) return;
     const up = quantity / UP_CONSTANTS[type];
     const { pilotIdx, dayIdx } = modal;
@@ -99,14 +127,23 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
       const next = deepCopySchedules(prev);
       const day = next[pilotIdx].days[dayIdx];
       if (modal.isNew) {
-        day.items.push({ demandId: '', client, type, quantity, up });
+        day.items.push({ demandId: '', client, type, quantity, up, note: note || undefined });
       } else {
-        day.items[modal.itemIdx] = { ...day.items[modal.itemIdx], client, type, quantity, up };
+        day.items[modal.itemIdx] = { ...day.items[modal.itemIdx], client, type, quantity, up, note: note || undefined };
       }
       recomputeDayUP(day);
       return next;
     });
     setModal({ open: false });
+  }
+
+  function handleEditNote(pilotIdx: number, dayIdx: number, itemIdx: number, note: string) {
+    setMutableSchedules((prev) => {
+      const next = deepCopySchedules(prev);
+      const item = next[pilotIdx].days[dayIdx].items[itemIdx];
+      item.note = note || undefined;
+      return next;
+    });
   }
 
   function handleDelete() {
@@ -130,6 +167,122 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
       } else {
         next.add(pilotId);
       }
+      return next;
+    });
+  }
+
+  const showToast = useCallback((message: string) => {
+    setToast({ message, id: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const allocatedGroups = useMemo(() => {
+    const map: Record<string, { client: string; type: ProductionType; count: number; totalUP: number }> = {};
+    mutableSchedules.forEach((sch) => {
+      sch.days.forEach((day) => {
+        day.items.forEach((item) => {
+          const key = `${item.client}||${item.type}`;
+          if (!map[key]) map[key] = { client: item.client, type: item.type, count: 0, totalUP: 0 };
+          map[key].count++;
+          map[key].totalUP += item.up;
+        });
+      });
+    });
+    return Object.entries(map).map(([key, v]) => ({ key, ...v }));
+  }, [mutableSchedules]);
+
+  function openSwapModal(client: string, type: AllocationItem['type'], count: number, totalUP: number) {
+    setSwapModal({ open: true, incomingClient: client, incomingType: type, incomingCount: count, incomingUP: totalUP });
+    setSwapCedenteKey('');
+    setSwapQty(1);
+  }
+
+  function confirmSwap() {
+    if (!swapModal.open || !swapCedenteKey) return;
+    const cedente = allocatedGroups.find(g => g.key === swapCedenteKey);
+    if (!cedente) return;
+    const qty = Math.min(swapQty, cedente.count, swapModal.incomingCount);
+
+    // Collect notes from unassigned items (incoming → going into calendar)
+    const incomingNotes = localUnassigned
+      .filter(it => it.client === swapModal.incomingClient && it.type === swapModal.incomingType)
+      .map(it => it.note ?? '');
+
+    // Collect notes from scheduled items (cedente → going back to unassigned)
+    const cedenteNotes: string[] = [];
+    let cedenteFound = 0;
+    for (const sch of mutableSchedules) {
+      for (const day of sch.days) {
+        for (let i = day.items.length - 1; i >= 0 && cedenteFound < qty; i--) {
+          if (`${day.items[i].client}||${day.items[i].type}` === swapCedenteKey) {
+            cedenteNotes.push(day.items[i].note ?? '');
+            cedenteFound++;
+          }
+        }
+      }
+    }
+
+    setMutableSchedules((prev) => {
+      const next = deepCopySchedules(prev);
+      let replaced = 0;
+      for (const sch of next) {
+        for (const day of sch.days) {
+          for (let i = day.items.length - 1; i >= 0 && replaced < qty; i--) {
+            const it = day.items[i];
+            if (`${it.client}||${it.type}` === swapCedenteKey) {
+              const incomingUpUnit = swapModal.incomingUP / swapModal.incomingCount;
+              const note = incomingNotes[replaced] || undefined;
+              day.items.splice(i, 1, {
+                demandId: `swapped-${Date.now()}-${replaced}`,
+                client: swapModal.incomingClient,
+                type: swapModal.incomingType,
+                quantity: 1,
+                up: incomingUpUnit,
+                note,
+              });
+              recomputeDayUP(day);
+              replaced++;
+            }
+          }
+        }
+      }
+      return next;
+    });
+
+    setLocalUnassigned((prev) => {
+      const next = [...prev];
+      let removedIncoming = 0;
+      for (let i = next.length - 1; i >= 0 && removedIncoming < qty; i--) {
+        if (next[i].client === swapModal.incomingClient && next[i].type === swapModal.incomingType) {
+          next.splice(i, 1);
+          removedIncoming++;
+        }
+      }
+      for (let j = 0; j < qty; j++) {
+        next.push({ demandId: `unassigned-${Date.now()}-${j}`, client: cedente.client, type: cedente.type, quantity: 1, up: cedente.totalUP / cedente.count, note: cedenteNotes[j] || undefined });
+      }
+      return next;
+    });
+
+    setSwapModal({ open: false });
+    showToast(`${qty} unidade(s) trocada(s)! As demandas retiradas estão na lista de não-alocadas.`);
+  }
+
+  function handleSwapDays(pilotIdx: number, fromDay: number, toDay: number) {
+    setMutableSchedules((prev) => {
+      const next = deepCopySchedules(prev);
+      const pilot = next[pilotIdx];
+      const tempItems = pilot.days[fromDay].items;
+      const tempUP = pilot.days[fromDay].totalUP;
+      pilot.days[fromDay].items = pilot.days[toDay].items;
+      pilot.days[fromDay].totalUP = pilot.days[toDay].totalUP;
+      pilot.days[toDay].items = tempItems;
+      pilot.days[toDay].totalUP = tempUP;
       return next;
     });
   }
@@ -193,6 +346,14 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
 
   return (
     <div>
+      {/* Toast global */}
+      {toast && (
+        <div key={toast.id} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-medium flex items-center gap-3 max-w-md">
+          <span>{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-2 text-slate-400 hover:text-white">✕</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div>
@@ -238,31 +399,82 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
             <span className="text-2xl">
               {status === 'balanced' ? '✅' : status === 'excess' ? '⚠️' : '💡'}
             </span>
-            <div>
-              <p className={`font-semibold text-base ${status === 'balanced' ? 'text-green-800' : status === 'excess' ? 'text-red-800' : 'text-blue-800'
-                }`}>
-                {status === 'balanced' && 'Planejamento equilibrado'}
-                {status === 'excess' && `Excesso de demanda — ${diffUP.toFixed(2)} UP precisam ser redistribuídas para outro Engineer`}
-                {status === 'idle' && `Capacidade ociosa — ${diffUP.toFixed(2)} UP disponíveis para ajudar outra equipe`}
-              </p>
-              <p className={`text-sm mt-1 ${status === 'balanced' ? 'text-green-700' : status === 'excess' ? 'text-red-700' : 'text-blue-700'
-                }`}>
-                {status === 'balanced' && `100% da demanda alocada. Média mensal: ${monthlyAvgUP.toFixed(2)} UP/dia.`}
-                {status === 'excess' && `Demanda: ${totalDemandUP.toFixed(2)} UP · Capacidade: ${totalCapacityUP.toFixed(0)} UP · Cobertura: ${coveragePercent.toFixed(1)}%`}
-                {status === 'idle' && `Média mensal: ${monthlyAvgUP.toFixed(2)} UP/dia · Demanda: ${totalDemandUP.toFixed(2)} UP`}
-              </p>
-              {status === 'idle' && (
-                <p className="text-xs mt-2 text-blue-600">
-                  Equivale aproximadamente a:{' '}
-                  <strong>{Math.floor(diffUP * 1.5)} blogpost{Math.floor(diffUP * 1.5) !== 1 ? 's' : ''}</strong>
-                  {' · '}
-                  <strong>{Math.floor(diffUP * 1.67)} categoria{Math.floor(diffUP * 1.67) !== 1 ? 's' : ''}</strong>
-                  {' · '}
-                  <strong>{Math.floor(diffUP * 1.79)} desc. produto{Math.floor(diffUP * 1.79) !== 1 ? 's' : ''}</strong>
-                  {' · '}
-                  <strong>{Math.floor(diffUP * 135)} SERP{Math.floor(diffUP * 135) !== 1 ? 's' : ''}</strong>
-                </p>
-              )}
+            <div className="flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={`font-semibold text-base ${status === 'balanced' ? 'text-green-800' : status === 'excess' ? 'text-red-800' : 'text-blue-800'}`}>
+                    {status === 'balanced' && 'Planejamento equilibrado'}
+                    {status === 'excess' && `Excesso de demanda — ${diffUP.toFixed(2)} UP precisam ser redistribuídas para outro Engineer`}
+                    {status === 'idle' && `Capacidade ociosa — ${diffUP.toFixed(2)} UP disponíveis para ajudar outra equipe`}
+                  </p>
+                  <p className={`text-sm mt-1 ${status === 'balanced' ? 'text-green-700' : status === 'excess' ? 'text-red-700' : 'text-blue-700'}`}>
+                    {status === 'balanced' && `100% da demanda alocada. Média mensal: ${monthlyAvgUP.toFixed(2)} UP/dia.`}
+                    {status === 'excess' && `Demanda: ${totalDemandUP.toFixed(2)} UP · Capacidade: ${totalCapacityUP.toFixed(0)} UP · Cobertura: ${coveragePercent.toFixed(1)}%`}
+                    {status === 'idle' && `Média mensal: ${monthlyAvgUP.toFixed(2)} UP/dia · Demanda: ${totalDemandUP.toFixed(2)} UP`}
+                  </p>
+                </div>
+                {status === 'idle' && (
+                  <button
+                    onClick={() => setShowSimulator(s => !s)}
+                    className="flex-shrink-0 text-sm font-medium px-4 py-2 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors whitespace-nowrap"
+                  >
+                    {showSimulator ? '– Fechar simulador' : '+ Simular o que cabe'}
+                  </button>
+                )}
+              </div>
+              {status === 'idle' && showSimulator && (() => {
+                const SIM_TYPES = [
+                  { key: 'blogpost_produce', label: 'Blogpost', divisor: 1.5 },
+                  { key: 'category_produce', label: 'Categoria', divisor: 1.67 },
+                  { key: 'product_description_produce', label: 'Descrição', divisor: 1.79 },
+                  { key: 'serp_produce', label: 'SERP', divisor: 135 },
+                  { key: 'blogpost_plan', label: 'Plan. blog', divisor: 5.73 },
+                  { key: 'category_plan', label: 'Plan. cat.', divisor: 9.28 },
+                ];
+                const simTotal = SIM_TYPES.reduce((s, t) => s + (simQty[t.key] || 0) / t.divisor, 0);
+                const pct = Math.min(100, (simTotal / diffUP) * 100);
+                const remaining = diffUP - simTotal;
+                return (
+                  <div className="mt-4 border-t border-blue-200 pt-4">
+                    <p className="text-xs text-blue-700 mb-3">Simule quantas produções cabem na folga disponível:</p>
+                    <div className="grid grid-cols-6 gap-2 mb-4">
+                      {SIM_TYPES.map(t => (
+                        <div key={t.key} className="flex flex-col items-center gap-1">
+                          <label className="text-[11px] font-semibold text-slate-500 text-center leading-tight">{t.label}</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={simQty[t.key] || 0}
+                            onChange={(e) => setSimQty(prev => ({ ...prev, [t.key]: Math.max(0, Number(e.target.value)) }))}
+                            className="w-full text-center border border-blue-200 rounded-md px-1 py-1.5 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between text-sm font-semibold mb-1">
+                      <span className={simTotal > diffUP ? 'text-red-600' : 'text-blue-800'}>
+                        Total simulado: {simTotal.toFixed(2)} UP
+                      </span>
+                      <span className="text-blue-700">Folga disponível: {diffUP.toFixed(2)} UP</span>
+                    </div>
+                    <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden mb-1">
+                      <div
+                        className={`h-2 rounded-full transition-all ${simTotal > diffUP ? 'bg-red-500' : 'bg-blue-500'}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={simTotal > diffUP ? 'text-red-500 font-medium' : 'text-slate-500'}>
+                        {pct.toFixed(0)}% da folga utilizada
+                      </span>
+                      <span className={remaining < 0 ? 'text-red-600 font-semibold' : 'text-blue-700 font-medium'}>
+                        {remaining >= 0 ? `Sobram ${remaining.toFixed(2)} UP` : `Excede em ${Math.abs(remaining).toFixed(2)} UP`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -288,8 +500,8 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
           </div>
         )}
 
-        {unassignedItems.length > 0 && (
-          <UnassignedTable items={unassignedItems} />
+        {localUnassigned.length > 0 && (
+          <UnassignedTable items={localUnassigned} onSwap={openSwapModal} />
         )}
       </div>
 
@@ -349,10 +561,6 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
           <div className="w-1 h-3 rounded bg-orange-400" />
           <span className="text-orange-600">Redirecionado (Sem preferência)</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-1 h-3 rounded bg-red-400" />
-          <span className="text-red-600">Atrasado (Fora da janela de prioridade)</span>
-        </div>
         <span className="text-slate-400 ml-2">
           Cores são informativas — validade determinada pela média mensal
         </span>
@@ -385,6 +593,9 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
         </div>
       </div>
 
+      {/* Legenda de UPs */}
+      <ProductionLegend />
+
       {/* Grade em Calendário */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
         <CalendarGrid
@@ -395,6 +606,8 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
           onClickItem={handleClickItem}
           onAddItem={handleAddItem}
           onMoveItem={handleMoveItem}
+          onSwapDays={handleSwapDays}
+          onEditNote={handleEditNote}
           selectedPilotIds={selectedPilotIds}
           year={year}
           month={month}
@@ -404,14 +617,20 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
       {/* Tabela UP/dia por Pilot */}
       <UPPerDayTable schedules={mutableSchedules} workdays={workdays} />
 
-      {/* Campos informativos não-UP por Pilot */}
-      {mutableSchedules.some(s =>
-        s.pilot.tarefas || s.pilot.ajustePost || s.pilot.ajusteCat || s.pilot.ajusteSerp
-      ) && (
-        <NonUPTable schedules={mutableSchedules} />
+      {/* Modal de edição */}
+      {swapModal.open && (
+        <SwapModal
+          incoming={swapModal}
+          allocatedGroups={allocatedGroups}
+          cedenteKey={swapCedenteKey}
+          swapQty={swapQty}
+          onSelectCedente={setSwapCedenteKey}
+          onChangeQty={setSwapQty}
+          onConfirm={confirmSwap}
+          onClose={() => setSwapModal({ open: false })}
+        />
       )}
 
-      {/* Modal de edição */}
       {modal.open && (
         <EditModal
           clients={clients}
@@ -421,7 +640,10 @@ export default function StepPlanning({ result, demandItems, month, year, onBack 
           initialType={modal.isNew
             ? undefined
             : mutableSchedules[modal.pilotIdx].days[modal.dayIdx].items[modal.itemIdx].type}
-            isNew={modal.isNew}
+          initialNote={modal.isNew
+            ? ''
+            : mutableSchedules[modal.pilotIdx].days[modal.dayIdx].items[modal.itemIdx].note ?? ''}
+          isNew={modal.isNew}
           onSave={handleSave}
           onDelete={modal.isNew ? undefined : handleDelete}
           onClose={() => setModal({ open: false })}
@@ -443,22 +665,28 @@ function MetricCard({ label, value, sub, highlight }: {
   );
 }
 
-function UnassignedTable({ items }: { items: AllocationItem[] }) {
-  const needsRedirect = items.filter(i => !i.missedDirectional);
-  const missedWeek = items.filter(i => i.missedDirectional);
+function UnassignedTable({
+  items,
+  onSwap,
+}: {
+  items: AllocationItem[];
+  onSwap: (client: string, type: AllocationItem['type'], count: number, totalUP: number) => void;
+}) {
+  const displacedItems = items.filter(i => i.displacedByHighPriority);
+  const needsRedirect = items.filter(i => !i.missedDirectional && !i.displacedByHighPriority);
+  const missedWeek = items.filter(i => i.missedDirectional && !i.displacedByHighPriority);
 
-  function ItemTable({ rows, borderColor, bgColor, headerColor, rowEvenBg, rowOddBg }: {
+  function ItemTable({ rows, borderColor, bgColor, headerColor, rowEvenBg, rowOddBg, showSwap }: {
     rows: AllocationItem[];
     borderColor: string; bgColor: string; headerColor: string;
     rowEvenBg: string; rowOddBg: string;
+    showSwap?: boolean;
   }) {
     const grouped = Object.values(
       rows.reduce<Record<string, { client: string; type: AllocationItem['type']; totalUP: number; count: number }>>(
         (acc, w) => {
           const key = `${w.client}||${w.type}`;
-          if (!acc[key]) {
-            acc[key] = { client: w.client, type: w.type, totalUP: 0, count: 0 };
-          }
+          if (!acc[key]) acc[key] = { client: w.client, type: w.type, totalUP: 0, count: 0 };
           acc[key].totalUP += w.up;
           acc[key].count += 1;
           return acc;
@@ -476,6 +704,7 @@ function UnassignedTable({ items }: { items: AllocationItem[] }) {
               <th className={`text-left px-3 py-2 font-semibold ${headerColor}`}>Tipo</th>
               <th className={`text-center px-3 py-2 font-semibold ${headerColor}`}>Qtd</th>
               <th className={`text-right px-3 py-2 font-semibold ${headerColor}`}>UP total</th>
+              {showSwap && <th className={`text-center px-3 py-2 font-semibold ${headerColor}`}>Ação</th>}
             </tr>
           </thead>
           <tbody>
@@ -491,6 +720,17 @@ function UnassignedTable({ items }: { items: AllocationItem[] }) {
                   ) : '—'}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-slate-700">{w.totalUP.toFixed(2)}</td>
+                {showSwap && (
+                  <td className="px-3 py-2 text-center">
+                    <button
+                      onClick={() => onSwap(w.client, w.type, w.count, w.totalUP)}
+                      className="text-xs bg-orange-100 hover:bg-orange-200 text-orange-700 font-semibold px-2 py-0.5 rounded transition-colors"
+                      title="Trocar com um grupo alocado"
+                    >
+                      ↔ Trocar
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -505,70 +745,164 @@ function UnassignedTable({ items }: { items: AllocationItem[] }) {
         <div className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 border-b border-red-200">
             <span className="text-lg">🔀</span>
-            <p className="text-sm font-semibold text-red-800">
+            <p className="text-sm font-semibold text-red-800 flex-1">
               {needsRedirect.length} produção{needsRedirect.length !== 1 ? 'ões' : ''} para redirecionar — pilot preferencial sem capacidade
             </p>
           </div>
           <ItemTable rows={needsRedirect}
             borderColor="border-red-100" bgColor="bg-red-100/50"
-            headerColor="text-red-700" rowEvenBg="bg-white/60" rowOddBg="bg-red-50/40" />
+            headerColor="text-red-700" rowEvenBg="bg-white/60" rowOddBg="bg-red-50/40" showSwap />
         </div>
       )}
       {missedWeek.length > 0 && (
         <div className="rounded-xl border border-orange-200 bg-orange-50 overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-200">
             <span className="text-lg">📅</span>
-            <p className="text-sm font-semibold text-orange-800">
+            <p className="text-sm font-semibold text-orange-800 flex-1">
               {missedWeek.length} produção{missedWeek.length !== 1 ? 'ões' : ''} fora da janela de prioridade — Engineer, realoque manualmente
             </p>
           </div>
           <ItemTable rows={missedWeek}
             borderColor="border-orange-100" bgColor="bg-orange-100/50"
-            headerColor="text-orange-700" rowEvenBg="bg-white/60" rowOddBg="bg-orange-50/40" />
+            headerColor="text-orange-700" rowEvenBg="bg-white/60" rowOddBg="bg-orange-50/40" showSwap />
         </div>
       )}
-
+      {displacedItems.length > 0 && (
+        <div className="rounded-xl border border-orange-300 bg-orange-50 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-orange-200">
+            <span className="text-lg">🔄</span>
+            <p className="text-sm font-semibold text-orange-900 flex-1">
+              {displacedItems.length} produção{displacedItems.length !== 1 ? 'ões' : ''} deslocadas por prioridade Alta
+            </p>
+            <span className="text-xs font-bold bg-orange-500 text-white px-2 py-0.5 rounded-full flex-shrink-0">
+              Deslocado por Alta
+            </span>
+          </div>
+          <ItemTable rows={displacedItems}
+            borderColor="border-orange-200" bgColor="bg-orange-100/60"
+            headerColor="text-orange-800" rowEvenBg="bg-white/60" rowOddBg="bg-orange-50/40" showSwap />
+        </div>
+      )}
     </div>
   );
 }
 
-function NonUPTable({ schedules }: { schedules: PilotSchedule[] }) {
-  const [open, setOpen] = useState(true);
+// ─── SwapModal ────────────────────────────────────────────────────────────────
+
+function SwapModal({
+  incoming, allocatedGroups, cedenteKey, swapQty,
+  onSelectCedente, onChangeQty, onConfirm, onClose,
+}: {
+  incoming: Extract<SwapModalState, { open: true }>;
+  allocatedGroups: { key: string; client: string; type: ProductionType; count: number; totalUP: number }[];
+  cedenteKey: string;
+  swapQty: number;
+  onSelectCedente: (key: string) => void;
+  onChangeQty: (qty: number) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const cedente = allocatedGroups.find(g => g.key === cedenteKey);
+  const maxQty = Math.min(cedente?.count ?? 1, incoming.incomingCount);
+
   return (
-    <div className="mt-4 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden no-print">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+        <div className="bg-slate-800 text-white px-6 py-4 flex items-center justify-between">
+          <h3 className="text-base font-semibold">↔ Trocar Produções</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">✕</button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="rounded-lg bg-green-50 border border-green-200 p-4">
+            <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">Grupo entrante (não-alocado)</p>
+            <p className="font-semibold text-slate-800">{incoming.incomingClient}</p>
+            <p className="text-sm text-slate-600">{PRODUCTION_LABELS[incoming.incomingType]}</p>
+            <p className="text-xs text-slate-500 mt-1">{incoming.incomingCount} unidade(s) · {incoming.incomingUP.toFixed(2)} UP</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Selecione o grupo cedente (alocado)</p>
+            <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+              {allocatedGroups.length === 0 && (
+                <p className="text-sm text-slate-400 p-3 text-center">Nenhum grupo alocado disponível.</p>
+              )}
+              {allocatedGroups.map((g) => (
+                <label key={g.key} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors ${g.key === cedenteKey ? 'bg-blue-50' : ''}`}>
+                  <input type="radio" name="cedente" checked={g.key === cedenteKey}
+                    onChange={() => { onSelectCedente(g.key); onChangeQty(1); }} className="accent-blue-600" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{g.client}</p>
+                    <p className="text-xs text-slate-500">{PRODUCTION_LABELS[g.type]}</p>
+                  </div>
+                  <span className="text-xs text-slate-500 flex-shrink-0">{g.count}× · {g.totalUP.toFixed(2)} UP</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          {cedenteKey && (
+            <div className="flex items-center gap-4 bg-slate-50 rounded-lg p-3">
+              <div className="flex-1">
+                <p className="text-xs font-medium text-slate-600 mb-1">Quantidade a trocar (máx: {maxQty})</p>
+                <input type="number" min={1} max={maxQty} value={swapQty}
+                  onChange={(e) => onChangeQty(Math.min(maxQty, Math.max(1, Number(e.target.value))))}
+                  className="w-24 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
+              <div className="text-xs text-slate-600 space-y-1 text-right">
+                <p><span className="text-red-500 font-semibold">−{swapQty}</span> de {cedente?.client}</p>
+                <p><span className="text-green-600 font-semibold">+{Math.min(swapQty, incoming.incomingCount)}</span> de {incoming.incomingClient}</p>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:border-slate-400 text-sm font-medium transition-colors">
+              Cancelar
+            </button>
+            <button onClick={onConfirm} disabled={!cedenteKey}
+              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors">
+              Confirmar troca
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function ProductionLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-4 no-print">
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-5 py-3 bg-slate-50 border-b border-slate-200 hover:bg-slate-100 transition-colors"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 bg-white transition-colors shadow-sm"
       >
-        <span className="text-sm font-semibold text-slate-700">
-          📋 Tarefas e ajustes por Pilot <span className="font-normal text-slate-400 text-xs ml-1">(informativo — não impacta o cálculo de UP)</span>
-        </span>
-        <span className="text-slate-400 text-xs">{open ? '▲ Recolher' : '▼ Expandir'}</span>
+        <span>📊</span>
+        <span className="font-medium">Legenda de UPs por produção</span>
+        <span className="text-slate-400">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="overflow-x-auto">
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/50">
-                <th className="px-4 py-2 text-left font-semibold text-slate-500">Pilot</th>
-                <th className="px-3 py-2 text-center font-semibold text-slate-500">Tarefas</th>
-                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. Post</th>
-                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. Cat</th>
-                <th className="px-3 py-2 text-center font-semibold text-slate-500">Aj. SERP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.map((sch) => (
-                <tr key={sch.pilot.id} className="border-b border-slate-50 hover:bg-slate-50/60">
-                  <td className="px-4 py-2 font-medium text-slate-700">{sch.pilot.name}</td>
-                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.tarefas ?? '—'}</td>
-                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajustePost ?? '—'}</td>
-                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajusteCat ?? '—'}</td>
-                  <td className="px-3 py-2 text-center text-slate-500">{sch.pilot.ajusteSerp ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-2 bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+          <div className="flex flex-wrap gap-2">
+            {LEGEND_ITEMS.map(({ label, type }) => {
+              const divisor = UP_CONSTANTS[type];
+              const up = isFinite(divisor) ? (1 / divisor) : null;
+              return (
+                <div
+                  key={type}
+                  className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5"
+                >
+                  <span className="text-xs font-semibold text-slate-700">{label}</span>
+                  <span className="text-slate-300">·</span>
+                  {up !== null ? (
+                    <span className="text-xs font-mono font-bold text-blue-600">{up.toFixed(3)} UP/un</span>
+                  ) : (
+                    <span className="text-xs font-mono text-slate-400">sem peso</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-3">UP = quantidade ÷ constante. Tipos marcados como "sem peso" são registrados mas não impactam métricas de capacidade.</p>
         </div>
       )}
     </div>

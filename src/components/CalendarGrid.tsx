@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { AllocationItem, ProductionType, PilotSchedule } from '../types';
 import { PRODUCTION_LABELS } from '../constants/productions';
@@ -11,9 +11,50 @@ interface Props {
     onClickItem: (pilotIdx: number, dayIdx: number, itemIdx: number) => void;
     onAddItem: (pilotIdx: number, dayIdx: number) => void;
     onMoveItem: (fromPilot: number, fromDay: number, fromItem: number, toPilot: number, toDay: number) => void;
+    onSwapDays: (pilotIdx: number, fromDay: number, toDay: number) => void;
+    onEditNote: (pilotIdx: number, dayIdx: number, itemIdx: number, note: string) => void;
     selectedPilotIds: Set<string>;
     year: number;
     month: number;
+}
+
+type NotePopover = { pilotIdx: number; dayIdx: number; itemIdx: number; text: string } | null;
+
+// ─── Note Popover ─────────────────────────────────────────────────────────────
+
+function NotePopoverBox({
+    text, textareaRef, onChange, onSave, onClose,
+}: {
+    text: string;
+    textareaRef: React.RefObject<HTMLTextAreaElement>;
+    onChange: (t: string) => void;
+    onSave: () => void;
+    onClose: () => void;
+}) {
+    return (
+        <div
+            className="bg-white border border-amber-200 rounded-xl shadow-2xl p-3 w-72"
+            onClick={(e) => e.stopPropagation()}
+        >
+            <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">📝 Nota para o Pilot</p>
+            <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => onChange(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSave(); } }}
+                placeholder="Ex: usar palavra-chave X, incluir 3 FAQs..."
+                rows={3}
+                className="w-full border border-amber-200 rounded-lg px-2 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-amber-50/30"
+            />
+            <div className="flex justify-between items-center mt-2 gap-2">
+                <span className="text-[9px] text-slate-400">Ctrl+Enter salva</span>
+                <div className="flex gap-1.5">
+                    <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1 rounded border border-slate-200 transition-colors">Cancelar</button>
+                    <button onClick={onSave} className="text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded font-medium transition-colors">Salvar</button>
+                </div>
+            </div>
+        </div>
+    );
 }
 
 // ─── Group helpers ────────────────────────────────────────────────────────────
@@ -59,7 +100,7 @@ function groupExpandKey(pilotIdx: number, dayIdx: number, client: string, type: 
 
 export default function CalendarGrid({
     schedules, freeWeekStartIdx,
-    checkedItems, onToggleCheck, onClickItem, onAddItem, onMoveItem,
+    checkedItems, onToggleCheck, onClickItem, onAddItem, onMoveItem, onSwapDays, onEditNote,
     selectedPilotIds, year, month
 }: Props) {
     if (schedules.length === 0) return null;
@@ -109,6 +150,30 @@ export default function CalendarGrid({
     // ── Expansion state ──────────────────────────────────────────────────────
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
+    // ── Toast state ──────────────────────────────────────────────────────────
+    const [toast, setToast] = useState<string | null>(null);
+    useEffect(() => {
+        if (!toast) return;
+        const t = setTimeout(() => setToast(null), 4000);
+        return () => clearTimeout(t);
+    }, [toast]);
+
+    // ── Note popover state ───────────────────────────────────────────────────
+    const [notePopover, setNotePopover] = useState<NotePopover>(null);
+    const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+    useEffect(() => {
+        if (notePopover) noteTextareaRef.current?.focus();
+    }, [notePopover]);
+
+    function openNote(pilotIdx: number, dayIdx: number, itemIdx: number, currentNote: string) {
+        setNotePopover({ pilotIdx, dayIdx, itemIdx, text: currentNote });
+    }
+    function saveNote() {
+        if (!notePopover) return;
+        onEditNote(notePopover.pilotIdx, notePopover.dayIdx, notePopover.itemIdx, notePopover.text);
+        setNotePopover(null);
+    }
+
     function toggleGroup(key: string) {
         setExpandedGroups((prev) => {
             const next = new Set(prev);
@@ -119,7 +184,27 @@ export default function CalendarGrid({
 
     // ── Rendering ────────────────────────────────────────────────────────────
     return (
-        <div className="overflow-x-auto bg-slate-50 border border-slate-200 rounded-lg">
+        <div className="relative overflow-x-auto bg-slate-50 border border-slate-200 rounded-lg">
+            {/* Note popover — fixed, centered, outside DOM flow so no animation jitter */}
+            {notePopover && (
+                <>
+                    <div className="fixed inset-0 z-30" onClick={() => setNotePopover(null)} />
+                    <div className="fixed z-40 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                        <NotePopoverBox
+                            text={notePopover.text}
+                            textareaRef={noteTextareaRef}
+                            onChange={(t) => setNotePopover(p => p ? { ...p, text: t } : p)}
+                            onSave={saveNote}
+                            onClose={() => setNotePopover(null)}
+                        />
+                    </div>
+                </>
+            )}
+            {toast && (
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white text-xs font-medium px-4 py-2 rounded-lg shadow-lg max-w-sm text-center">
+                    {toast}
+                </div>
+            )}
             <table className="w-full border-collapse table-fixed min-w-[1000px]">
                 <thead>
                     <tr>
@@ -161,7 +246,7 @@ export default function CalendarGrid({
                                                     acc.push(
                                                         <div
                                                             key={`p-${sch.pilot.id}`}
-                                                            className={`rounded border-l-4 ${getPilotColor(sch.pilot.id)} p-1 shadow-sm flex flex-col min-h-[44px] hover:shadow-md transition-shadow group`}
+                                                            className={`rounded border-l-4 ${getPilotColor(sch.pilot.id)} p-1 shadow-sm flex flex-col min-h-[44px] transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md group`}
                                                             onDragOver={(e) => {
                                                                 e.preventDefault();
                                                                 e.dataTransfer.dropEffect = 'move';
@@ -172,8 +257,20 @@ export default function CalendarGrid({
                                                                 if (!data) return;
                                                                 try {
                                                                     const parsed = JSON.parse(data);
-                                                                    if (Array.isArray(parsed.itemIndices)) {
-                                                                        // Group drag: move all items in reverse to keep indices valid
+                                                                    if (parsed.type === 'card-swap') {
+                                                                        if (parsed.pilotIdx !== pilotIdx) {
+                                                                            setToast('Não é possível trocar cards de pilots diferentes.');
+                                                                            return;
+                                                                        }
+                                                                        if (parsed.dayIdx === dayIdx) return;
+                                                                        const fromIsAlta = parsed.dayIdx < 10;
+                                                                        const toIsAlta = dayIdx < 10;
+                                                                        if (fromIsAlta !== toIsAlta) {
+                                                                            setToast('Este card contém itens de prioridade Alta e não pode ser movido para fora das duas primeiras semanas.');
+                                                                            return;
+                                                                        }
+                                                                        onSwapDays(pilotIdx, parsed.dayIdx, dayIdx);
+                                                                    } else if (Array.isArray(parsed.itemIndices)) {
                                                                         const sorted = [...parsed.itemIndices].sort((a, b) => b - a);
                                                                         sorted.forEach((fromItemIdx: number) => {
                                                                             onMoveItem(parsed.pilotIdx, parsed.dayIdx, fromItemIdx, pilotIdx, dayIdx);
@@ -184,8 +281,17 @@ export default function CalendarGrid({
                                                                 } catch (_) { }
                                                             }}
                                                         >
-                                                            <div className="text-[10px] font-bold uppercase tracking-wider mb-1 opacity-70">
-                                                                {sch.pilot.name}
+                                                            <div
+                                                                className="text-[10px] font-bold uppercase tracking-wider mb-1 opacity-70 hover:opacity-100 cursor-grab active:cursor-grabbing select-none rounded-sm px-0.5 -mx-0.5 hover:bg-black/5 transition-all duration-150"
+                                                                draggable
+                                                                title="Arrastar para trocar o dia inteiro"
+                                                                onDragStart={(e) => {
+                                                                    e.dataTransfer.setData('application/json', JSON.stringify({ type: 'card-swap', pilotIdx, dayIdx }));
+                                                                    e.dataTransfer.effectAllowed = 'move';
+                                                                    e.stopPropagation();
+                                                                }}
+                                                            >
+                                                                ⠿ {sch.pilot.name}
                                                             </div>
 
                                                             <div className="space-y-1">
@@ -193,6 +299,7 @@ export default function CalendarGrid({
                                                                     const expandKey = groupExpandKey(pilotIdx, dayIdx, group.client, group.type);
                                                                     const isExpanded = expandedGroups.has(expandKey);
                                                                     const isGrouped = group.indices.length > 1;
+                                                                    const hasHighPriority = group.indices.some((i) => dayItems[i].priority === 'alta');
 
                                                                     if (!isGrouped) {
                                                                         // Single item — render exactly as before
@@ -202,11 +309,14 @@ export default function CalendarGrid({
                                                                         const done = checkedItems.has(key);
                                                                         const spillover = item.isSpillover === true;
                                                                         const missed = item.missedDirectional === true;
+                                                                        const isHighPriority = item.priority === 'alta';
 
                                                                         let borderClass = 'border-slate-100 hover:border-blue-300';
                                                                         let bgClass = 'bg-white';
                                                                         if (missed) { borderClass = 'border-red-300'; bgClass = 'bg-red-50/50'; }
                                                                         else if (spillover) { borderClass = 'border-orange-300'; bgClass = 'bg-orange-50/50'; }
+                                                                        const hasNote = !!item.note?.trim();
+                                                                        if (hasNote) borderClass = borderClass.replace('border-slate-100', 'border-amber-300');
 
                                                                         return (
                                                                             <div
@@ -216,7 +326,7 @@ export default function CalendarGrid({
                                                                                     e.dataTransfer.setData('application/json', JSON.stringify({ pilotIdx, dayIdx, itemIdx: ii }));
                                                                                     e.dataTransfer.effectAllowed = 'move';
                                                                                 }}
-                                                                                className={`flex items-start gap-1 text-xs rounded p-1 border cursor-grab active:cursor-grabbing transition-colors ${done ? 'opacity-40 grayscale' : ''} ${borderClass} ${bgClass}`}
+                                                                                className={`flex items-start gap-1 text-xs rounded p-1 border cursor-grab active:cursor-grabbing transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm ${done ? 'opacity-40 grayscale' : ''} ${borderClass} ${bgClass}`}
                                                                             >
                                                                                 <input
                                                                                     type="checkbox"
@@ -228,16 +338,30 @@ export default function CalendarGrid({
                                                                                     className={`text-left leading-tight flex-1 hover:bg-blue-50 cursor-pointer transition-colors px-1 rounded ${done ? 'line-through text-slate-500' : ''}`}
                                                                                     onClick={() => onClickItem(pilotIdx, dayIdx, ii)}
                                                                                 >
-                                                                                    {spillover && !missed && (
+                                                                                    {spillover && !missed && !isHighPriority && (
                                                                                         <span className="block text-[8px] font-bold text-orange-500 uppercase leading-none mb-0.5">↩ redir</span>
-                                                                                    )}
-                                                                                    {missed && (
-                                                                                        <span className="block text-[8px] font-bold text-red-500 uppercase leading-none mb-0.5" title="Fora da janela de prioridade">⚠️ atrasado</span>
                                                                                     )}
                                                                                     <span className="font-medium text-slate-800">{item.client}</span>
                                                                                     <span className="text-slate-400 mx-0.5">·</span>
                                                                                     <span className="text-slate-600">{PRODUCTION_LABELS[item.type]}</span>
                                                                                 </button>
+                                                                                {hasNote ? (
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); openNote(pilotIdx, dayIdx, ii, item.note ?? ''); }}
+                                                                                        title={item.note}
+                                                                                        className="flex-shrink-0 inline-flex items-center bg-amber-100 border border-amber-300 text-amber-700 text-[9px] font-bold px-1 py-0.5 rounded hover:bg-amber-200 transition-colors leading-none"
+                                                                                    >
+                                                                                        💬
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); openNote(pilotIdx, dayIdx, ii, item.note ?? ''); }}
+                                                                                        title="Adicionar nota"
+                                                                                        className="flex-shrink-0 text-[10px] leading-none text-slate-200 hover:text-amber-400 transition-colors px-0.5 rounded"
+                                                                                    >
+                                                                                        📝
+                                                                                    </button>
+                                                                                )}
                                                                             </div>
                                                                         );
                                                                     }
@@ -250,9 +374,11 @@ export default function CalendarGrid({
                                                                     let groupBg = 'bg-white';
                                                                     if (group.missedDirectional) { groupBorder = 'border-red-300'; groupBg = 'bg-red-50/40'; }
                                                                     else if (group.isSpillover) { groupBorder = 'border-orange-300'; groupBg = 'bg-orange-50/40'; }
+                                                                    const groupHasNote = group.indices.some(i => !!dayItems[i].note?.trim());
+                                                                    if (groupHasNote && !group.missedDirectional && !group.isSpillover) groupBorder = 'border-amber-300';
 
                                                                     return (
-                                                                        <div key={`group-${group.client}-${group.type}`} className={`rounded border ${groupBorder} ${groupBg} text-xs overflow-hidden`}>
+                                                                        <div key={`group-${group.client}-${group.type}`} className={`rounded border ${groupBorder} ${groupBg} text-xs overflow-hidden transition-all duration-150 ${!isExpanded ? 'hover:-translate-y-0.5 hover:shadow-sm' : ''}`}>
                                                                             {/* Group header — always visible */}
                                                                             <div
                                                                                 draggable={!isExpanded}
@@ -260,7 +386,7 @@ export default function CalendarGrid({
                                                                                     e.dataTransfer.setData('application/json', JSON.stringify({ pilotIdx, dayIdx, itemIndices: group.indices }));
                                                                                     e.dataTransfer.effectAllowed = 'move';
                                                                                 } : undefined}
-                                                                                className={`flex items-center gap-1 p-1 ${!isExpanded ? 'cursor-grab active:cursor-grabbing' : ''} ${allDone ? 'opacity-40 grayscale' : ''}`}
+                                                                                className={`flex items-center gap-1 p-1 ${!isExpanded ? 'cursor-grab active:cursor-grabbing hover:bg-black/[0.04] transition-colors duration-150' : ''} ${allDone ? 'opacity-40 grayscale' : ''}`}
                                                                             >
                                                                                 <input
                                                                                     type="checkbox"
@@ -278,10 +404,7 @@ export default function CalendarGrid({
                                                                                     onClick={(e) => e.stopPropagation()}
                                                                                 />
                                                                                 <div className="flex-1 min-w-0 leading-tight">
-                                                                                    {group.missedDirectional && (
-                                                                                        <span className="block text-[8px] font-bold text-red-500 uppercase leading-none mb-0.5">⚠️ atrasado</span>
-                                                                                    )}
-                                                                                    {group.isSpillover && !group.missedDirectional && (
+                                                                                    {group.isSpillover && !group.missedDirectional && !hasHighPriority && (
                                                                                         <span className="block text-[8px] font-bold text-orange-500 uppercase leading-none mb-0.5">↩ redir</span>
                                                                                     )}
                                                                                     <span className="font-medium text-slate-800 truncate">{group.client}</span>
@@ -291,6 +414,9 @@ export default function CalendarGrid({
                                                                                 <span className="flex-shrink-0 inline-flex items-center justify-center bg-slate-100 text-slate-600 font-semibold rounded-full text-[9px] px-1.5 py-0.5 min-w-[1.25rem]">
                                                                                     {group.indices.length}×
                                                                                 </span>
+                                                                                {groupHasNote && (
+                                                                                    <span className="flex-shrink-0 inline-flex items-center bg-amber-100 border border-amber-300 text-amber-700 text-[9px] font-bold px-1 py-0.5 rounded leading-none" title="Este grupo contém notas — expanda para ver">💬</span>
+                                                                                )}
                                                                                 <button
                                                                                     onClick={() => toggleGroup(expandKey)}
                                                                                     className="flex-shrink-0 text-slate-400 hover:text-slate-700 px-0.5 transition-colors"
@@ -313,6 +439,7 @@ export default function CalendarGrid({
                                                                                         let rowBg = 'bg-white hover:bg-slate-50';
                                                                                         if (missed) rowBg = 'bg-red-50/60 hover:bg-red-50';
                                                                                         else if (spillover) rowBg = 'bg-orange-50/60 hover:bg-orange-50';
+                                                                                        const expHasNote = !!item.note?.trim();
 
                                                                                         return (
                                                                                             <div
@@ -322,7 +449,7 @@ export default function CalendarGrid({
                                                                                                     e.dataTransfer.setData('application/json', JSON.stringify({ pilotIdx, dayIdx, itemIdx: ii }));
                                                                                                     e.dataTransfer.effectAllowed = 'move';
                                                                                                 }}
-                                                                                                className={`flex items-start gap-1 px-1.5 py-1 cursor-grab active:cursor-grabbing transition-colors ${done ? 'opacity-40 grayscale' : ''} ${rowBg}`}
+                                                                                                className={`flex items-start gap-1 px-1.5 py-1 cursor-grab active:cursor-grabbing transition-all duration-150 hover:-translate-y-px ${done ? 'opacity-40 grayscale' : ''} ${rowBg}`}
                                                                                             >
                                                                                                 <input
                                                                                                     type="checkbox"
@@ -336,6 +463,23 @@ export default function CalendarGrid({
                                                                                                 >
                                                                                                     #{ii + 1}
                                                                                                 </button>
+                                                                                                {expHasNote ? (
+                                                                                                    <button
+                                                                                                        onClick={(e) => { e.stopPropagation(); openNote(pilotIdx, dayIdx, ii, item.note ?? ''); }}
+                                                                                                        title={item.note}
+                                                                                                        className="flex-shrink-0 inline-flex items-center bg-amber-100 border border-amber-300 text-amber-700 text-[9px] font-bold px-1 py-0.5 rounded hover:bg-amber-200 transition-colors leading-none"
+                                                                                                    >
+                                                                                                        💬
+                                                                                                    </button>
+                                                                                                ) : (
+                                                                                                    <button
+                                                                                                        onClick={(e) => { e.stopPropagation(); openNote(pilotIdx, dayIdx, ii, item.note ?? ''); }}
+                                                                                                        title="Adicionar nota"
+                                                                                                        className="flex-shrink-0 text-[10px] leading-none text-slate-200 hover:text-amber-400 transition-colors px-0.5"
+                                                                                                    >
+                                                                                                        📝
+                                                                                                    </button>
+                                                                                                )}
                                                                                             </div>
                                                                                         );
                                                                                     })}

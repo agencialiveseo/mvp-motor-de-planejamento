@@ -6,18 +6,20 @@ interface Props {
   clients: string[];
   initialClient?: string;
   initialType?: ProductionType;
+  initialNote?: string;
   isNew: boolean;
-  onSave: (client: string, type: ProductionType, quantity: number) => void;
+  onSave: (client: string, type: ProductionType, quantity: number, note: string) => void;
   onDelete?: () => void;
   onClose: () => void;
 }
 
 export default function EditModal({
   clients, initialClient = '', initialType = 'blogpost_produce',
-  isNew, onSave, onDelete, onClose,
+  initialNote = '', isNew, onSave, onDelete, onClose,
 }: Props) {
   const [client, setClient] = useState(initialClient);
   const [type, setType] = useState<ProductionType>(initialType);
+  const [note, setNote] = useState(initialNote);
   const quantity = 1;
 
   return (
@@ -58,6 +60,20 @@ export default function EditModal({
             </select>
           </div>
 
+          {/* Nota */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Nota para o Pilot
+              <span className="ml-1 text-xs font-normal text-slate-400">(opcional)</span>
+            </label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Ex: usar palavra-chave X, incluir 3 FAQs..."
+              rows={3}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-800 placeholder:text-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+            />
+          </div>
         </div>
 
         <div className="flex justify-between mt-6">
@@ -79,7 +95,7 @@ export default function EditModal({
               Cancelar
             </button>
             <button
-              onClick={() => { if (client) onSave(client, type, quantity); }}
+              onClick={() => { if (client) onSave(client, type, quantity, note); }}
               disabled={!client}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
             >
